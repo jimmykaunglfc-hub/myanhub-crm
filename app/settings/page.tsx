@@ -18,6 +18,7 @@ export default function EnhancedSettings() {
   // Workspace States
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [userEmail, setUserEmail] = useState('Loading...');
+  const [userId, setUserId] = useState(''); // NEW: Capturing the Tenant ID
   
   // Integration States
   const [activeChannel, setActiveChannel] = useState<ChannelType | null>(null);
@@ -31,7 +32,10 @@ export default function EnhancedSettings() {
   useEffect(() => {
     const fetchSession = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user?.email) setUserEmail(user.email);
+      if (user) {
+        setUserEmail(user.email || '');
+        setUserId(user.id); // NEW: Set the Tenant ID
+      }
     };
     fetchSession();
   }, []);
@@ -44,14 +48,15 @@ export default function EnhancedSettings() {
       // 1. Grab the current domain (e.g., crm.myanhub.com) automatically
       const currentDomain = window.location.host;
 
-      // 2. Fire the token to our new backend API to register the webhook
+      // 2. Fire the token and userId to our new backend API to register the webhook
       const res = await fetch('/api/register-bot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           token: credentialKey, 
           platform: activeChannel, 
-          domain: currentDomain 
+          domain: currentDomain,
+          userId: userId // NEW: Attach the ID to the payload
         })
       });
 
