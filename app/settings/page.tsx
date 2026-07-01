@@ -38,23 +38,47 @@ export default function EnhancedSettings() {
 
   const handleSaveChannelConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    setChannelStatus('Authenticating API gates...');
+    setChannelStatus('Authenticating API gates with platform...');
     
-    // Write telemetry log to Supabase for Super Admin auditing
-    const { error } = await supabase.from('system_integration_logs').insert({
-      client_email: userEmail,
-      channel: activeChannel,
-      status: 'SUCCESSFUL_OAUTH_LINK'
-    });
+    try {
+      // 1. Grab the current domain (e.g., crm.myanhub.com) automatically
+      const currentDomain = window.location.host;
 
-    setTimeout(() => {
+      // 2. Fire the token to our new backend API to register the webhook
+      const res = await fetch('/api/register-bot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          token: credentialKey, 
+          platform: activeChannel, 
+          domain: currentDomain 
+        })
+      });
+
+      const apiData = await res.json();
+
+      if (!apiData.success) {
+        setChannelStatus(`Integration Link Error: ${apiData.error}`);
+        return;
+      }
+      
+      // 3. If Telegram accepted the webhook, write the audit log to Supabase
+      const { error } = await supabase.from('system_integration_logs').insert({
+        client_email: userEmail,
+        channel: activeChannel,
+        status: 'SUCCESSFUL_OAUTH_LINK'
+      });
+
       if (error) {
-        setChannelStatus(`Integration Link Error: ${error.message}`);
+        setChannelStatus(`Database Sync Error: ${error.message}`);
       } else {
         setChannelStatus(`Success! Secure webhook established for ${activeChannel}.`);
         setCredentialKey('');
       }
-    }, 1500);
+      
+    } catch (err: any) {
+      setChannelStatus(`Network Error: Failed to contact integration gateway.`);
+    }
   };
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
@@ -70,7 +94,6 @@ export default function EnhancedSettings() {
     }
   };
 
-  // Restored: Full Enterprise-Grade Integration Blueprints
   const guidelines: Record<ChannelType, { title: string; steps: string[]; placeholder: string }> = {
     telegram: {
       title: "Telegram Bot API Integration Guide",
@@ -263,7 +286,7 @@ export default function EnhancedSettings() {
             )}
           </div>
 
-          {/* SECTION 3: RESTORED SECURITY MODULE */}
+          {/* SECTION 3: SECURITY MODULE */}
           <div className={`p-6 rounded-2xl border shadow-sm transition-colors duration-200 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
             <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
               <Shield size={18} className="text-indigo-600" /> Security & Authentication
