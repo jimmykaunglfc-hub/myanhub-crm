@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { LayoutDashboard, Inbox, Users, ShoppingCart, Settings } from 'lucide-react';
 
 export default function Sidebar() {
@@ -8,30 +9,30 @@ export default function Sidebar() {
       </div>
       
       <nav className="flex-1 space-y-1">
-        <a href="#" className="flex items-center gap-3 bg-indigo-50 text-indigo-700 rounded-lg px-3 py-2.5 font-medium">
+        <Link href="/" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors">
           <LayoutDashboard size={20} />
           Dashboard
-        </a>
-        <a href="#" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors">
+        </Link>
+        <Link href="/inbox" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors">
           <Inbox size={20} />
           Unified Inbox
           <span className="ml-auto bg-indigo-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">3</span>
-        </a>
-        <a href="#" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors">
+        </Link>
+        <Link href="/customers" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors">
           <Users size={20} />
           Customers
-        </a>
-        <a href="#" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors">
+        </Link>
+        <Link href="/orders" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors">
           <ShoppingCart size={20} />
           Orders
-        </a>
+        </Link>
       </nav>
 
       <div className="mt-auto pt-6 border-t border-slate-200">
-        <a href="#" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors mb-4">
+        <Link href="/settings" className="flex items-center gap-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg px-3 py-2.5 font-medium transition-colors mb-4">
           <Settings size={20} />
           Settings
-        </a>
+        </Link>
         <div className="flex items-center gap-3 px-3">
           <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold">SM</div>
           <div>
