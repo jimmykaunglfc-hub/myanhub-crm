@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { 
   ShieldCheck, Users, DollarSign, MessageSquare, 
-  Plus, Layers, Activity, Server, TrendingUp, CheckCircle2 
+  Plus, Layers, Activity, Server, TrendingUp, CheckCircle2,
+  ShieldAlert, LogOut
 } from 'lucide-react';
 
 interface ClientWorkspace {
@@ -25,7 +27,18 @@ interface PlatformOrder {
 }
 
 export default function SuperAdminDashboard() {
+  const router = useRouter();
+  
+  // Security States
+  const [authorized, setAuthorized] = useState(false);
+  const [adminEmail, setAdminEmail] = useState('');
+  
+  // ⚠️ CHANGE THIS TO YOUR ACTUAL MASTER SUPABASE EMAIL
+  const MASTER_ADMIN_EMAIL = "jimmy@myanhub.com";
+
+  // UI States
   const [activeTab, setActiveTab] = useState<'overview' | 'workspaces' | 'transactions'>('overview');
+  const [loading, setLoading] = useState(true);
   
   // Data State Arrays
   const [workspaces, setWorkspaces] = useState<ClientWorkspace[]>([]);
@@ -37,17 +50,33 @@ export default function SuperAdminDashboard() {
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [provisionStatus, setProvisionStatus] = useState('');
-  const [loading, setLoading] = useState(true);
 
-  // Fetch complete system telemetry
+  // 1. Verify Master Access on Load
+  useEffect(() => {
+    const verifyMasterAccess = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error || !session || session.user.email !== MASTER_ADMIN_EMAIL) {
+        // Intruder detected (or not logged in). Kick them to the login page.
+        router.push('/login');
+      } else {
+        // Access Granted!
+        setAdminEmail(session.user.email);
+        setAuthorized(true);
+        fetchSystemData(); // Only load data if authorized
+      }
+    };
+
+    verifyMasterAccess();
+  }, [router]);
+
+  // 2. Fetch complete system telemetry
   const fetchSystemData = async () => {
     setLoading(true);
     
-    // 1. Fetch Client Workspaces Log
     const { data: workspaceData } = await supabase.from('system_client_workspaces').select('*').order('created_at', { ascending: false });
     if (workspaceData) setWorkspaces(workspaceData);
 
-    // 2. Fetch System Transactions (Orders)
     const { data: orderData } = await supabase.from('orders').select('id, order_id_string, total_amount, status, created_at, customers(name, platform)').order('created_at', { ascending: false });
     if (orderData) {
       setOrders(orderData as unknown as PlatformOrder[]);
@@ -55,22 +84,16 @@ export default function SuperAdminDashboard() {
       setPlatformGmv(gmvSum);
     }
 
-    // 3. Get total message throughput count
     const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true });
     if (count) setTotalMessages(count);
 
     setLoading(false);
   };
 
-  useEffect(() => {
-    fetchSystemData();
-  }, []);
-
   const handleProvisionClient = async (e: React.FormEvent) => {
     e.preventDefault();
     setProvisionStatus('Initializing direct node allocation...');
 
-    // Trigger backend server action API route
     const res = await fetch('/api/create-client', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -79,7 +102,6 @@ export default function SuperAdminDashboard() {
 
     const data = await res.json();
     if (data.success) {
-      // Register creation success inside workspace tracking table
       await supabase.from('system_client_workspaces').insert({
         client_email: newEmail,
         plan_tier: 'Premium Business',
@@ -89,14 +111,32 @@ export default function SuperAdminDashboard() {
       setProvisionStatus(`Success! Client node activated for ${newEmail}`);
       setNewEmail('');
       setNewPassword('');
-      fetchSystemData(); // Refresh metrics list instantly
+      fetchSystemData(); 
     } else {
       setProvisionStatus(`Provisioning Failed: ${data.error}`);
     }
   };
 
+  const handleMasterLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/login');
+  };
+
+  // Security Wall Loading State
+  if (!authorized && loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-indigo-500 font-mono">
+        <ShieldAlert size={48} className="mb-4 animate-pulse opacity-50" />
+        <p className="tracking-widest text-sm uppercase">Verifying Master Clearance...</p>
+      </div>
+    );
+  }
+
+  // Double check to prevent flash of content
+  if (!authorized) return null;
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col md:flex-row">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col md:flex-row selection:bg-indigo-500/30">
       
       {/* Super Admin Vertical Control Strip */}
       <aside className="w-full md:w-64 bg-slate-900 border-b md:border-b-0 md:border-r border-slate-800 p-6 flex flex-col justify-between">
@@ -128,9 +168,17 @@ export default function SuperAdminDashboard() {
           </nav>
         </div>
 
-        <div className="mt-8 pt-6 border-t border-slate-800 px-2 flex items-center gap-3 text-slate-500">
-          <Server size={16} />
-          <span className="text-xs font-mono">v2.1.0 - Production</span>
+        <div className="mt-8 pt-6 border-t border-slate-800 flex flex-col gap-4">
+          <button 
+            onClick={handleMasterLogout}
+            className="flex items-center gap-3 px-4 py-2 text-rose-400 hover:bg-rose-950/30 hover:text-rose-300 rounded-lg text-sm font-semibold transition-all"
+          >
+            <LogOut size={16} /> Terminate Session
+          </button>
+          <div className="px-4 flex items-center gap-3 text-slate-500">
+            <Server size={16} />
+            <span className="text-xs font-mono">v2.1.0 - Production</span>
+          </div>
         </div>
       </aside>
 
@@ -153,15 +201,15 @@ export default function SuperAdminDashboard() {
 
         {loading ? (
           <div className="h-64 flex items-center justify-center text-indigo-400 font-mono tracking-widest animate-pulse">
-            CONNECTING PIPELINES...
+            SYNCING PIPELINES...
           </div>
         ) : (
           <>
-            {/* Global Metric Cards Grid (Always displays key system performance fields) */}
+            {/* Global Metric Cards Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
                 <div className="flex justify-between items-center text-slate-500 mb-3">
-                  <span className="text-xs font-bold uppercase tracking-wider">Total Hosted Workspaces</span>
+                  <span className="text-xs font-bold uppercase tracking-wider">Hosted Workspaces</span>
                   <Users size={16} className="text-indigo-400" />
                 </div>
                 <div className="text-3xl font-black text-white">{workspaces.length}</div>
@@ -172,7 +220,7 @@ export default function SuperAdminDashboard() {
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
                 <div className="flex justify-between items-center text-slate-500 mb-3">
-                  <span className="text-xs font-bold uppercase tracking-wider">Accumulated Platform GMV</span>
+                  <span className="text-xs font-bold uppercase tracking-wider">Platform GMV</span>
                   <DollarSign size={16} className="text-emerald-400" />
                 </div>
                 <div className="text-3xl font-black text-white">${platformGmv.toFixed(2)}</div>
@@ -197,8 +245,6 @@ export default function SuperAdminDashboard() {
                 <div className="text-xs text-slate-400 mt-1.5 font-mono">All servers responsive</div>
               </div>
             </div>
-
-            {/* TAB VIEW CONTROLLER */}
             
             {/* TAB 1: OVERVIEW & NEW CLIENT PROVISIONING */}
             {activeTab === 'overview' && (
