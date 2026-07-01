@@ -10,9 +10,7 @@ interface Order {
   order_id_string: string;
   total_amount: number;
   status: string;
-  customers: {
-    name: string;
-  } | null;
+  customers: { name: string } | null;
 }
 
 export default function OrdersPage() {
@@ -21,24 +19,12 @@ export default function OrdersPage() {
 
   useEffect(() => {
     const fetchOrders = async () => {
-      // Fetches orders and performs an automatic backend join to get the customer's name
       const { data, error } = await supabase
         .from('orders')
-        .select(`
-          id,
-          order_id_string,
-          total_amount,
-          status,
-          customers ( name )
-        `);
-      
-      if (!error && data) {
-        // Cast the data to our Order array type safely
-        setOrders(data as unknown as Order[]);
-      }
+        .select('id, order_id_string, total_amount, status, customers(name)');
+      if (!error && data) setOrders(data as unknown as Order[]);
       setLoading(false);
     };
-
     fetchOrders();
   }, []);
 
@@ -55,7 +41,7 @@ export default function OrdersPage() {
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             {loading ? (
-              <div className="p-8 text-center text-slate-500">Loading orders...</div>
+              <div className="p-8 text-center text-slate-500">Loading order data...</div>
             ) : (
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -67,20 +53,14 @@ export default function OrdersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {orders.map((order) => (
-                    <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="px-6 py-4 font-mono text-sm font-semibold text-slate-700">{order.order_id_string}</td>
-                      <td className="px-6 py-4 text-slate-900 font-medium">
-                        {order.customers?.name || "Unknown Customer"}
-                      </td>
-                      <td className="px-6 py-4 font-medium text-slate-900">${Number(order.total_amount).toFixed(2)}</td>
+                  {orders.map((o) => (
+                    <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-6 py-4 font-mono text-sm font-semibold text-slate-700">{o.order_id_string}</td>
+                      <td className="px-6 py-4 text-slate-900 font-medium">{o.customers?.name || "Generic Buyer"}</td>
+                      <td className="px-6 py-4 font-medium text-slate-900">${Number(o.total_amount).toFixed(2)}</td>
                       <td className="px-6 py-4">
-                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium uppercase tracking-wider ${
-                          order.status === 'shipped' 
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}>
-                          {order.status}
+                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium uppercase ${o.status === 'shipped' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                          {o.status}
                         </span>
                       </td>
                     </tr>
