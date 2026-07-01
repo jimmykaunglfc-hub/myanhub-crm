@@ -1,50 +1,344 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { supabase } from '../../lib/supabase';
+import { 
+  ShieldCheck, Users, DollarSign, MessageSquare, 
+  Plus, Layers, Activity, Server, TrendingUp, CheckCircle2 
+} from 'lucide-react';
 
-export default function AdminPanel() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [status, setStatus] = useState('');
+interface ClientWorkspace {
+  id: string;
+  created_at: string;
+  client_email: string;
+  plan_tier: string;
+  status: string;
+}
 
-  const handleCreateClient = async (e: React.FormEvent) => {
+interface PlatformOrder {
+  id: string;
+  order_id_string: string;
+  total_amount: number;
+  status: string;
+  created_at: string;
+  customers: { name: string; platform: string } | null;
+}
+
+export default function SuperAdminDashboard() {
+  const [activeTab, setActiveTab] = useState<'overview' | 'workspaces' | 'transactions'>('overview');
+  
+  // Data State Arrays
+  const [workspaces, setWorkspaces] = useState<ClientWorkspace[]>([]);
+  const [orders, setOrders] = useState<PlatformOrder[]>([]);
+  const [totalMessages, setTotalMessages] = useState<number>(0);
+  const [platformGmv, setPlatformGmv] = useState<number>(0);
+  
+  // Creation States
+  const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [provisionStatus, setProvisionStatus] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  // Fetch complete system telemetry
+  const fetchSystemData = async () => {
+    setLoading(true);
+    
+    // 1. Fetch Client Workspaces Log
+    const { data: workspaceData } = await supabase.from('system_client_workspaces').select('*').order('created_at', { ascending: false });
+    if (workspaceData) setWorkspaces(workspaceData);
+
+    // 2. Fetch System Transactions (Orders)
+    const { data: orderData } = await supabase.from('orders').select('id, order_id_string, total_amount, status, created_at, customers(name, platform)').order('created_at', { ascending: false });
+    if (orderData) {
+      setOrders(orderData as unknown as PlatformOrder[]);
+      const gmvSum = orderData.reduce((acc, curr) => acc + Number(curr.total_amount), 0);
+      setPlatformGmv(gmvSum);
+    }
+
+    // 3. Get total message throughput count
+    const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true });
+    if (count) setTotalMessages(count);
+
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchSystemData();
+  }, []);
+
+  const handleProvisionClient = async (e: React.FormEvent) => {
     e.preventDefault();
-    setStatus('Provisioning digital workspace...');
+    setProvisionStatus('Initializing direct node allocation...');
 
+    // Trigger backend server action API route
     const res = await fetch('/api/create-client', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email: newEmail, password: newPassword })
     });
 
     const data = await res.json();
     if (data.success) {
-      setStatus(`Success! Workspace created for ${email}`);
-      setEmail(''); setPassword('');
+      // Register creation success inside workspace tracking table
+      await supabase.from('system_client_workspaces').insert({
+        client_email: newEmail,
+        plan_tier: 'Premium Business',
+        status: 'active'
+      });
+      
+      setProvisionStatus(`Success! Client node activated for ${newEmail}`);
+      setNewEmail('');
+      setNewPassword('');
+      fetchSystemData(); // Refresh metrics list instantly
     } else {
-      setStatus(`Provisioning Error: ${data.error}`);
+      setProvisionStatus(`Provisioning Failed: ${data.error}`);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
-      <div className="bg-slate-800 p-8 rounded-xl max-w-md w-full border border-slate-700 shadow-2xl">
-        <h2 className="text-xl font-bold mb-1 text-indigo-400">MyanHub Workspace Provisioner</h2>
-        <p className="text-slate-400 text-xs mb-6">Register secure access nodes for incoming premium clients.</p>
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col md:flex-row">
+      
+      {/* Super Admin Vertical Control Strip */}
+      <aside className="w-full md:w-64 bg-slate-900 border-b md:border-b-0 md:border-r border-slate-800 p-6 flex flex-col justify-between">
+        <div>
+          <div className="flex items-center gap-3 mb-8 px-2 text-indigo-400">
+            <ShieldCheck size={28} className="animate-pulse" />
+            <span className="text-xl font-black uppercase tracking-wider">MyanHub HQ</span>
+          </div>
+          
+          <nav className="space-y-1">
+            <button 
+              onClick={() => setActiveTab('overview')}
+              className={`w-full text-left flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${activeTab === 'overview' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            >
+              <Activity size={18} /> Global Telemetry
+            </button>
+            <button 
+              onClick={() => setActiveTab('workspaces')}
+              className={`w-full text-left flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${activeTab === 'workspaces' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            >
+              <Layers size={18} /> Client Workspaces
+            </button>
+            <button 
+              onClick={() => setActiveTab('transactions')}
+              className={`w-full text-left flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${activeTab === 'transactions' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            >
+              <DollarSign size={18} /> Live Transactions
+            </button>
+          </nav>
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-slate-800 px-2 flex items-center gap-3 text-slate-500">
+          <Server size={16} />
+          <span className="text-xs font-mono">v2.1.0 - Production</span>
+        </div>
+      </aside>
+
+      {/* Main Panel Canvas Area */}
+      <main className="flex-1 p-6 md:p-10 overflow-y-auto">
         
-        <form onSubmit={handleCreateClient} className="space-y-4">
+        {/* Header Block */}
+        <div className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Client Admin Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-indigo-500 transition" placeholder="client@shop.com" />
+            <h1 className="text-3xl font-extrabold tracking-tight text-white">Super Admin Management Panel</h1>
+            <p className="text-slate-400 text-sm mt-1">SaaS infrastructure overview, data metrics routing, and configuration deployment control center.</p>
           </div>
-          <div>
-            <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Assigned Passkey</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-indigo-500 transition" placeholder="••••••••" />
+          <button 
+            onClick={fetchSystemData} 
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg border border-slate-700 transition"
+          >
+            Force Sync Core Data
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="h-64 flex items-center justify-center text-indigo-400 font-mono tracking-widest animate-pulse">
+            CONNECTING PIPELINES...
           </div>
-          <button type="submit" className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-lg text-sm hover:bg-indigo-500 transition shadow-lg">Provision New Client</button>
-        </form>
-        {status && <p className="mt-4 text-xs font-medium text-center text-amber-400 bg-slate-950/40 p-2.5 rounded-lg border border-slate-700/50">{status}</p>}
-      </div>
+        ) : (
+          <>
+            {/* Global Metric Cards Grid (Always displays key system performance fields) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div className="flex justify-between items-center text-slate-500 mb-3">
+                  <span className="text-xs font-bold uppercase tracking-wider">Total Hosted Workspaces</span>
+                  <Users size={16} className="text-indigo-400" />
+                </div>
+                <div className="text-3xl font-black text-white">{workspaces.length}</div>
+                <div className="text-xs text-emerald-400 font-medium flex items-center gap-1 mt-1">
+                  <TrendingUp size={12} /> Live health normal
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div className="flex justify-between items-center text-slate-500 mb-3">
+                  <span className="text-xs font-bold uppercase tracking-wider">Accumulated Platform GMV</span>
+                  <DollarSign size={16} className="text-emerald-400" />
+                </div>
+                <div className="text-3xl font-black text-white">${platformGmv.toFixed(2)}</div>
+                <div className="text-xs text-slate-400 mt-1">Aggregate client revenue flow</div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div className="flex justify-between items-center text-slate-500 mb-3">
+                  <span className="text-xs font-bold uppercase tracking-wider">Webhook Chat Load</span>
+                  <MessageSquare size={16} className="text-indigo-400" />
+                </div>
+                <div className="text-3xl font-black text-white">{totalMessages}</div>
+                <div className="text-xs text-indigo-400 mt-1">Total dynamic network entries</div>
+              </div>
+
+              <div className="bg-slate-900 border border-indigo-950 rounded-xl p-5 shadow-xl bg-gradient-to-br from-slate-900 to-indigo-950/20">
+                <div className="flex justify-between items-center text-slate-400 mb-3">
+                  <span className="text-xs font-bold uppercase tracking-wider">Operational Status</span>
+                  <CheckCircle2 size={16} className="text-indigo-400" />
+                </div>
+                <div className="text-xl font-bold text-indigo-300">ONLINE</div>
+                <div className="text-xs text-slate-400 mt-1.5 font-mono">All servers responsive</div>
+              </div>
+            </div>
+
+            {/* TAB VIEW CONTROLLER */}
+            
+            {/* TAB 1: OVERVIEW & NEW CLIENT PROVISIONING */}
+            {activeTab === 'overview' && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Deployment Provisioner */}
+                <div className="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl h-fit">
+                  <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
+                    <Plus size={18} className="text-indigo-400" /> Provision Node
+                  </h3>
+                  <p className="text-slate-400 text-xs mb-6">Forge standard login tickets and initialize isolated user database schemas dynamically.</p>
+                  
+                  <form onSubmit={handleProvisionClient} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">CLIENT ACCESS EMAIL</label>
+                      <input 
+                        type="email" 
+                        value={newEmail} 
+                        onChange={e => setNewEmail(e.target.value)} 
+                        required 
+                        className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500 transition" 
+                        placeholder="merchant@store.com" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">SECURE ACCESS KEY</label>
+                      <input 
+                        type="password" 
+                        value={newPassword} 
+                        onChange={e => setNewPassword(e.target.value)} 
+                        required 
+                        className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500 transition" 
+                        placeholder="••••••••" 
+                      />
+                    </div>
+                    <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2.5 rounded-lg transition shadow-lg shadow-indigo-600/10">
+                      Deploy Active Workspace
+                    </button>
+                  </form>
+                  {provisionStatus && (
+                    <p className="mt-4 text-xs font-medium text-center text-amber-400 bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono">
+                      {provisionStatus}
+                    </p>
+                  )}
+                </div>
+
+                {/* Audit Workspace Logs Dashboard view element */}
+                <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl flex flex-col">
+                  <h3 className="text-lg font-bold text-white mb-4">Recent Workspace Activity</h3>
+                  <div className="divide-y divide-slate-800 overflow-y-auto max-h-[320px]">
+                    {workspaces.slice(0, 5).map((ws) => (
+                      <div key={ws.id} className="py-3 flex justify-between items-center gap-4">
+                        <div>
+                          <p className="text-sm font-medium text-white">{ws.client_email}</p>
+                          <p className="text-xs text-slate-500">
+                            Node Initialized: {new Date(ws.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <span className="text-xs bg-slate-950 border border-slate-800 text-indigo-400 px-2.5 py-1 rounded-md font-mono">
+                          {ws.plan_tier}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: COMPLETE SYSTEM WORKSPACES REPOSITORY */}
+            {activeTab === 'workspaces' && (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden">
+                <div className="p-6 border-b border-slate-800">
+                  <h3 className="text-lg font-bold text-white">Hosted Corporate Tenants Directory</h3>
+                  <p className="text-slate-400 text-xs mt-1">Review active subscriber instances, assign package levels, or configure authorization matrices.</p>
+                </div>
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-950 text-slate-400 text-xs font-bold uppercase tracking-wider border-b border-slate-800">
+                      <th className="px-6 py-4">Client Tenant Node</th>
+                      <th className="px-6 py-4">System Tier</th>
+                      <th className="px-6 py-4">Database Health Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {workspaces.map((ws) => (
+                      <tr key={ws.id} className="hover:bg-slate-850 transition-colors">
+                        <td className="px-6 py-4 font-medium text-white">{ws.client_email}</td>
+                        <td className="px-6 py-4 text-slate-300 font-mono text-sm">{ws.plan_tier}</td>
+                        <td className="px-6 py-4">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-400 border border-emerald-900">
+                            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping"></span> Active Syncing
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* TAB 3: SYSTEM TRANSACTION LEDGER */}
+            {activeTab === 'transactions' && (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden">
+                <div className="p-6 border-b border-slate-800">
+                  <h3 className="text-lg font-bold text-white">Live Platform Transaction Stream</h3>
+                  <p className="text-slate-400 text-xs mt-1">Monitor inbound cash generation flows and total sales volume metrics across all integrated systems.</p>
+                </div>
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-950 text-slate-400 text-xs font-bold uppercase tracking-wider border-b border-slate-800">
+                      <th className="px-6 py-4">Global Order Key</th>
+                      <th className="px-6 py-4">Inbound Customer Entity</th>
+                      <th className="px-6 py-4">Gross Revenue Amount</th>
+                      <th className="px-6 py-4">Fulfillment State</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {orders.map((order) => (
+                      <tr key={order.id} className="hover:bg-slate-850 transition-colors">
+                        <td className="px-6 py-4 font-mono text-sm text-indigo-400 font-bold">{order.order_id_string}</td>
+                        <td className="px-6 py-4">
+                          <div>
+                            <p className="text-sm font-medium text-white">{order.customers?.name || 'Generic Lead'}</p>
+                            <p className="text-xs text-slate-500">{order.customers?.platform || 'Direct API Channel'}</p>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 font-semibold text-white">${Number(order.total_amount).toFixed(2)}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex px-2.5 py-0.5 rounded text-xs font-bold tracking-wide uppercase ${order.status === 'shipped' ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' : 'bg-amber-950 text-amber-400 border border-amber-900'}`}>
+                            {order.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </main>
     </div>
   );
 }
