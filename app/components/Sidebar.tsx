@@ -4,22 +4,15 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { useTheme } from '../context/ThemeContext';
 import { LayoutDashboard, Inbox, Users, ShoppingCart, Settings, LogOut } from 'lucide-react';
 
 export default function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
+  const { isDarkMode } = useTheme();
   const [userEmail, setUserEmail] = useState('Loading...');
   const [unreadCount, setUnreadCount] = useState(0);
-
-  const fetchUnreadMetrics = async () => {
-    const { count, error } = await supabase
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'unread');
-    
-    if (!error && count !== null) setUnreadCount(count);
-  };
 
   useEffect(() => {
     const fetchActiveProfile = async () => {
@@ -27,20 +20,13 @@ export default function Sidebar() {
       if (user?.email) setUserEmail(user.email);
     };
     
+    const fetchUnreadMetrics = async () => {
+      const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('status', 'unread');
+      if (count !== null) setUnreadCount(count);
+    };
+
     fetchActiveProfile();
     fetchUnreadMetrics();
-
-    // Listen for new incoming messages and recalculate unread badge metrics instantly
-    const channel = supabase
-      .channel('sidebar-metrics-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
-        fetchUnreadMetrics();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
 
   const handleLogout = async () => {
@@ -51,56 +37,41 @@ export default function Sidebar() {
   const isActive = (path: string) => pathname === path;
 
   return (
-    <aside className="hidden md:flex bg-white fixed left-0 top-0 h-full w-64 border-r border-slate-200 flex-col py-6 px-4 z-50">
+    <aside className={`hidden md:flex fixed left-0 top-0 h-full w-64 border-r flex-col py-6 px-4 z-50 transition-colors duration-200 ${isDarkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}>
       <div className="mb-10 px-2">
         <h1 className="text-2xl font-extrabold text-indigo-600 tracking-tight">MyanHub</h1>
       </div>
       
       <nav className="flex-1 space-y-1">
-        <Link href="/" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
-          <LayoutDashboard size={20} />
-          Dashboard
-        </Link>
-        <Link href="/inbox" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/inbox') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
-          <Inbox size={20} />
-          Unified Inbox
-          {unreadCount > 0 && (
-            <span className="ml-auto bg-indigo-600 text-white text-xs font-bold px-2 py-0.5 rounded-full animate-bounce">
-              {unreadCount}
-            </span>
-          )}
-        </Link>
-        <Link href="/customers" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/customers') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
-          <Users size={20} />
-          Customers
-        </Link>
-        <Link href="/orders" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/orders') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
-          <ShoppingCart size={20} />
-          Orders
-        </Link>
+        {[
+          { href: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
+          { href: '/inbox', label: 'Unified Inbox', icon: <Inbox size={20} />, count: unreadCount },
+          { href: '/customers', label: 'Customers', icon: <Users size={20} /> },
+          { href: '/orders', label: 'Orders', icon: <ShoppingCart size={20} /> },
+        ].map((item) => (
+          <Link 
+            key={item.href}
+            href={item.href} 
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive(item.href) ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10' : isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+          >
+            {item.icon}
+            {item.label}
+            {!!item.count && <span className="ml-auto bg-rose-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{item.count}</span>}
+          </Link>
+        ))}
       </nav>
 
-      <div className="mt-auto pt-6 border-t border-slate-200 space-y-4">
-        <Link href="/settings" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/settings') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
-          <Settings size={20} />
-          Settings
+      <div className={`mt-auto pt-4 border-t space-y-4 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+        <Link href="/settings" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/settings') ? 'bg-indigo-600 text-white' : isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
+          <Settings size={20} /> Settings
         </Link>
         
-        <div className="flex items-center justify-between px-2 bg-slate-50 py-2.5 rounded-xl border border-slate-100">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-full bg-indigo-600 text-white flex-shrink-0 flex items-center justify-center font-bold text-sm uppercase">
-              {userEmail[0]}
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-900 truncate uppercase">
-                {userEmail.split('@')[0]}
-              </p>
-              <p className="text-xs text-slate-400 truncate">Workspace Node</p>
-            </div>
+        <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex-shrink-0 flex items-center justify-center font-bold text-xs uppercase">{userEmail[0]}</div>
+            <p className="text-xs font-bold truncate uppercase">{userEmail.split('@')[0]}</p>
           </div>
-          <button onClick={handleLogout} className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-white border border-transparent hover:border-slate-100 transition-colors">
-            <LogOut size={16} />
-          </button>
+          <button onClick={handleLogout} className="text-slate-400 hover:text-rose-500 p-1 rounded"><LogOut size={16} /></button>
         </div>
       </div>
     </aside>
