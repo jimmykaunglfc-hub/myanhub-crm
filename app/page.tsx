@@ -1,7 +1,37 @@
+"use client";
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '../lib/supabase';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 
 export default function Home() {
+  const router = useRouter();
+  const [isAuthorized, setIsAuthorized] = useState(false);
+
+  useEffect(() => {
+    // This function acts as our security bouncer
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        // No login ticket found? Kick them to the login page!
+        router.push('/login');
+      } else {
+        // They are logged in! Let them see the dashboard.
+        setIsAuthorized(true);
+      }
+    };
+
+    checkAuth();
+  }, [router]);
+
+  // Show a blank screen for a split second while we check their credentials
+  if (!isAuthorized) {
+    return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500 font-medium">Securing connection...</div>;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans">
       <Sidebar />
