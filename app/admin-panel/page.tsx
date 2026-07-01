@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabase';
 import { 
   ShieldCheck, Users, DollarSign, MessageSquare, 
   Plus, Layers, Activity, Server, TrendingUp, CheckCircle2,
-  ShieldAlert, LogOut
+  ShieldAlert, LogOut, Terminal, Radio
 } from 'lucide-react';
 
 interface ClientWorkspace {
@@ -26,6 +26,15 @@ interface PlatformOrder {
   customers: { name: string; platform: string } | null;
 }
 
+// NEW: Interface for our telemetry logs
+interface IntegrationLog {
+  id: string;
+  created_at: string;
+  client_email: string;
+  channel: string;
+  status: string;
+}
+
 export default function SuperAdminDashboard() {
   const router = useRouter();
   
@@ -33,7 +42,6 @@ export default function SuperAdminDashboard() {
   const [authorized, setAuthorized] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   
-  // ⚠️ CHANGE THIS TO YOUR ACTUAL MASTER SUPABASE EMAIL
   const MASTER_ADMIN_EMAIL = "jimmy@myanhub.com";
 
   // UI States
@@ -43,6 +51,7 @@ export default function SuperAdminDashboard() {
   // Data State Arrays
   const [workspaces, setWorkspaces] = useState<ClientWorkspace[]>([]);
   const [orders, setOrders] = useState<PlatformOrder[]>([]);
+  const [integrationLogs, setIntegrationLogs] = useState<IntegrationLog[]>([]); // NEW: State for logs
   const [totalMessages, setTotalMessages] = useState<number>(0);
   const [platformGmv, setPlatformGmv] = useState<number>(0);
   
@@ -57,13 +66,11 @@ export default function SuperAdminDashboard() {
       const { data: { session }, error } = await supabase.auth.getSession();
       
       if (error || !session || session.user.email !== MASTER_ADMIN_EMAIL) {
-        // Intruder detected (or not logged in). Kick them to the login page.
         router.push('/login');
       } else {
-        // Access Granted!
         setAdminEmail(session.user.email);
         setAuthorized(true);
-        fetchSystemData(); // Only load data if authorized
+        fetchSystemData(); 
       }
     };
 
@@ -74,9 +81,15 @@ export default function SuperAdminDashboard() {
   const fetchSystemData = async () => {
     setLoading(true);
     
+    // Fetch Workspaces
     const { data: workspaceData } = await supabase.from('system_client_workspaces').select('*').order('created_at', { ascending: false });
     if (workspaceData) setWorkspaces(workspaceData);
 
+    // NEW: Fetch Integration Logs (Limit to 15 most recent)
+    const { data: logsData } = await supabase.from('system_integration_logs').select('*').order('created_at', { ascending: false }).limit(15);
+    if (logsData) setIntegrationLogs(logsData);
+
+    // Fetch Orders & GMV
     const { data: orderData } = await supabase.from('orders').select('id, order_id_string, total_amount, status, created_at, customers(name, platform)').order('created_at', { ascending: false });
     if (orderData) {
       setOrders(orderData as unknown as PlatformOrder[]);
@@ -84,11 +97,26 @@ export default function SuperAdminDashboard() {
       setPlatformGmv(gmvSum);
     }
 
+    // Fetch Message Count
     const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true });
     if (count) setTotalMessages(count);
 
     setLoading(false);
   };
+
+  // 3. NEW: Real-Time Listener for the Log Terminal
+  useEffect(() => {
+    if (!authorized) return;
+
+    const channel = supabase.channel('live-telemetry-layer')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'system_integration_logs' }, (payload) => {
+        // Drop the new log into the top of our array instantly
+        setIntegrationLogs(prev => [payload.new as IntegrationLog, ...prev.slice(0, 14)]);
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [authorized]);
 
   const handleProvisionClient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,7 +160,6 @@ export default function SuperAdminDashboard() {
     );
   }
 
-  // Double check to prevent flash of content
   if (!authorized) return null;
 
   return (
@@ -246,7 +273,7 @@ export default function SuperAdminDashboard() {
               </div>
             </div>
             
-            {/* TAB 1: OVERVIEW & NEW CLIENT PROVISIONING */}
+            {/* TAB 1: OVERVIEW & LOGS */}
             {activeTab === 'overview' && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Deployment Provisioner */}
@@ -290,23 +317,36 @@ export default function SuperAdminDashboard() {
                   )}
                 </div>
 
-                {/* Audit Workspace Logs Dashboard view element */}
+                {/* NEW: Live Webhook & API Channels Logger Terminal */}
                 <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl flex flex-col">
-                  <h3 className="text-lg font-bold text-white mb-4">Recent Workspace Activity</h3>
-                  <div className="divide-y divide-slate-800 overflow-y-auto max-h-[320px]">
-                    {workspaces.slice(0, 5).map((ws) => (
-                      <div key={ws.id} className="py-3 flex justify-between items-center gap-4">
-                        <div>
-                          <p className="text-sm font-medium text-white">{ws.client_email}</p>
-                          <p className="text-xs text-slate-500">
-                            Node Initialized: {new Date(ws.created_at).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <span className="text-xs bg-slate-950 border border-slate-800 text-indigo-400 px-2.5 py-1 rounded-md font-mono">
-                          {ws.plan_tier}
-                        </span>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Terminal size={18} className="text-indigo-400" /> Live Integration API Logs
+                    </h3>
+                    <span className="text-[10px] bg-slate-950 text-indigo-400 px-2 py-0.5 rounded border border-slate-800 font-mono flex items-center gap-1.5">
+                      <Radio size={10} className="text-emerald-500 animate-ping" /> Real-time Streaming
+                    </span>
+                  </div>
+                  
+                  <div className="flex-1 space-y-3 overflow-y-auto max-h-[340px] pr-1 font-mono text-xs">
+                    {integrationLogs.length === 0 ? (
+                      <div className="text-center py-12 text-slate-600 border border-dashed border-slate-800 rounded-xl">
+                        No outbound API connections mapped into platform yet.
                       </div>
-                    ))}
+                    ) : (
+                      integrationLogs.map((log) => (
+                        <div key={log.id} className="p-3 bg-slate-950 border border-slate-800 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:border-slate-700 transition-colors">
+                          <div className="min-w-0">
+                            <span className="text-emerald-500 font-bold">[{log.channel.toUpperCase()}]</span>{' '}
+                            <span className="text-slate-300 font-medium truncate inline-block max-w-xs sm:max-w-sm align-bottom">{log.client_email}</span>
+                          </div>
+                          <div className="flex items-center justify-between sm:justify-end gap-3 flex-shrink-0">
+                            <span className="text-[10px] bg-indigo-950/50 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-900/60 font-semibold">{log.status}</span>
+                            <span className="text-slate-500 text-[10px]">{new Date(log.created_at).toLocaleTimeString()}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>

@@ -36,12 +36,24 @@ export default function EnhancedSettings() {
     fetchSession();
   }, []);
 
-  const handleSaveChannelConfig = (e: React.FormEvent) => {
+  const handleSaveChannelConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setChannelStatus('Authenticating API gates...');
+    
+    // Write telemetry log to Supabase for Super Admin auditing
+    const { error } = await supabase.from('system_integration_logs').insert({
+      client_email: userEmail,
+      channel: activeChannel,
+      status: 'SUCCESSFUL_OAUTH_LINK'
+    });
+
     setTimeout(() => {
-      setChannelStatus(`Success! Secure webhook established for ${activeChannel}.`);
-      setCredentialKey('');
+      if (error) {
+        setChannelStatus(`Integration Link Error: ${error.message}`);
+      } else {
+        setChannelStatus(`Success! Secure webhook established for ${activeChannel}.`);
+        setCredentialKey('');
+      }
     }, 1500);
   };
 
