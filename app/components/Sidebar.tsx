@@ -10,17 +10,37 @@ export default function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const [userEmail, setUserEmail] = useState('Loading...');
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const fetchUnreadMetrics = async () => {
+    const { count, error } = await supabase
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'unread');
+    
+    if (!error && count !== null) setUnreadCount(count);
+  };
 
   useEffect(() => {
     const fetchActiveProfile = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user?.email) {
-        setUserEmail(user.email);
-      } else {
-        setUserEmail('Active Session');
-      }
+      if (user?.email) setUserEmail(user.email);
     };
+    
     fetchActiveProfile();
+    fetchUnreadMetrics();
+
+    // Listen for new incoming messages and recalculate unread badge metrics instantly
+    const channel = supabase
+      .channel('sidebar-metrics-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
+        fetchUnreadMetrics();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -28,7 +48,6 @@ export default function Sidebar() {
     router.push('/login');
   };
 
-  // Tracking color matrix wrapper helper for sidebar navigation links
   const isActive = (path: string) => pathname === path;
 
   return (
@@ -45,7 +64,11 @@ export default function Sidebar() {
         <Link href="/inbox" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/inbox') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
           <Inbox size={20} />
           Unified Inbox
-          <span className="ml-auto bg-indigo-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">3</span>
+          {unreadCount > 0 && (
+            <span className="ml-auto bg-indigo-600 text-white text-xs font-bold px-2 py-0.5 rounded-full animate-bounce">
+              {unreadCount}
+            </span>
+          )}
         </Link>
         <Link href="/customers" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/customers') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
           <Users size={20} />
@@ -57,7 +80,6 @@ export default function Sidebar() {
         </Link>
       </nav>
 
-      {/* Account Info Profile Integration Area */}
       <div className="mt-auto pt-6 border-t border-slate-200 space-y-4">
         <Link href="/settings" className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium transition-colors ${isActive('/settings') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
           <Settings size={20} />
@@ -70,17 +92,13 @@ export default function Sidebar() {
               {userEmail[0]}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-900 truncate uppercase" title={userEmail}>
+              <p className="text-sm font-semibold text-slate-900 truncate uppercase">
                 {userEmail.split('@')[0]}
               </p>
               <p className="text-xs text-slate-400 truncate">Workspace Node</p>
             </div>
           </div>
-          <button 
-            onClick={handleLogout} 
-            className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-white border border-transparent hover:border-slate-100 transition-colors" 
-            title="Disconnect/Sign out"
-          >
+          <button onClick={handleLogout} className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-white border border-transparent hover:border-slate-100 transition-colors">
             <LogOut size={16} />
           </button>
         </div>
