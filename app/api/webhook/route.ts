@@ -3,7 +3,6 @@ import type { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 // IMPORTANT: We use the SERVICE_ROLE_KEY here to safely bypass RLS on the backend
-// This allows the webhook to verify customers and insert messages without hitting the security wall.
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
@@ -26,6 +25,10 @@ export async function POST(req: NextRequest) {
       const telegramUser = payload.message.from;
       const text = payload.message.text;
 
+      // CRITICAL NEW ADDITION: Grab the unique Chat ID from the incoming payload
+      const chatId = payload.message.chat.id;
+      const socialLink = `tg://user?id=${chatId}`; // Format it for the outbound route
+
       let customerId = '';
       const fallbackName = telegramUser.first_name || 'Telegram Lead';
 
@@ -41,14 +44,22 @@ export async function POST(req: NextRequest) {
 
       if (existingCustomer) {
         customerId = existingCustomer.id;
+        
+        // Update the link just in case it was missing previously (fixes older test accounts)
+        await supabase
+          .from('customers')
+          .update({ social_profile_link: socialLink })
+          .eq('id', customerId);
+
       } else {
-        // 2. If new, create a new customer profile and attach it to the specific tenant
+        // 2. If new, create a new customer profile AND save their chat routing ID
         const { data: newCustomer } = await supabase
           .from('customers')
           .insert({
             name: fallbackName,
             platform: 'telegram',
-            user_id: userId
+            user_id: userId,
+            social_profile_link: socialLink // The outbound route needs this!
           })
           .select()
           .single();
