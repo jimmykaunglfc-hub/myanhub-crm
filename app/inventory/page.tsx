@@ -108,7 +108,6 @@ export default function Inventory() {
       await fetchInventory(userId);
       setIsModalOpen(false);
     } catch (error: any) {
-      // NEW: Catch the error and force a popup so we know EXACTLY what failed
       alert(`Database Error: ${error.message}`);
     } finally {
       setFormProcessing(false);
@@ -162,7 +161,7 @@ export default function Inventory() {
             </button>
           </div>
 
-          {/* Metric Cards */}
+          {/* Metric Cards - UPDATED FOR CLEAN LIGHT MODE */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
               <div className="flex justify-between items-center mb-2">
@@ -180,17 +179,17 @@ export default function Inventory() {
               <div className="text-2xl font-black">${inventoryValue.toFixed(2)}</div>
             </div>
 
-            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-rose-950/20 border-rose-900/30' : 'bg-rose-50 border-rose-100'}`}>
+            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-rose-950/20 border-rose-900/30' : 'bg-white border-rose-200'}`}>
               <div className="flex justify-between items-center mb-2">
-                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-rose-400' : 'text-rose-600'}`}>Out of Stock</span>
+                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-rose-400' : 'text-rose-500'}`}>Out of Stock</span>
                 <AlertTriangle size={16} className="text-rose-500" />
               </div>
               <div className={`text-2xl font-black ${isDarkMode ? 'text-rose-500' : 'text-rose-600'}`}>{outOfStockCount}</div>
             </div>
 
-            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-amber-950/20 border-amber-900/30' : 'bg-amber-50 border-amber-100'}`}>
+            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-amber-950/20 border-amber-900/30' : 'bg-white border-amber-200'}`}>
               <div className="flex justify-between items-center mb-2">
-                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-amber-400' : 'text-amber-600'}`}>Low Stock Alert</span>
+                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-amber-400' : 'text-amber-500'}`}>Low Stock Alert</span>
                 <ArrowUpDown size={16} className="text-amber-500" />
               </div>
               <div className={`text-2xl font-black ${isDarkMode ? 'text-amber-500' : 'text-amber-600'}`}>{lowStockCount}</div>
