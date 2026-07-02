@@ -13,7 +13,6 @@ interface Message { id: string; customer_id: string; sender: string; content: st
 export default function UnifiedInbox() {
   const { isDarkMode } = useTheme();
   
-  // CRITICAL: We now capture the tenant's User ID to pass the backend security checks
   const [userId, setUserId] = useState<string | null>(null);
   
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -50,8 +49,9 @@ export default function UnifiedInbox() {
 
   useEffect(() => {
     syncCRMState();
+    // Only listen for new incoming messages from customers to prevent double-rendering our optimistic updates
     const channel = supabase.channel('live-inbox-feed')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, syncCRMState)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: "sender=eq.customer" }, syncCRMState)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, syncCRMState)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -66,36 +66,55 @@ export default function UnifiedInbox() {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // We strictly check for the userId before trying to send
     if (!selectedCustomerId || (!typedMessage.trim() && !mediaUrl.trim()) || !userId) return;
     
     setSending(true);
+
+    const messageContent = typedMessage || `[Media Attachment] ${mediaUrl}`;
+    const temporaryId = `temp-${Date.now()}`;
+    
+    // 1. OPTIMISTIC UI UPDATE: Instantly display the message on the screen!
+    const optimisticMessage: Message = {
+      id: temporaryId,
+      customer_id: selectedCustomerId,
+      sender: 'Workspace Manager',
+      content: messageContent,
+      created_at: new Date().toISOString(),
+      status: 'sending'
+    };
+
+    setMessages(prev => [...prev, optimisticMessage]);
+    
+    // Clear inputs instantly so the user can keep typing
+    setTypedMessage(''); 
+    setMediaUrl(''); 
+    setShowMediaInput(false); 
+    setShowEmojis(false); 
     
     try {
+      // 2. BACKGROUND PROCESSING: Tell the server to handle the Telegram API
       const response = await fetch('/api/send-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // We now securely pass the userId directly into the backend payload
         body: JSON.stringify({ 
           customerId: selectedCustomerId, 
-          text: typedMessage, 
+          text: messageContent, 
           mediaUrl,
           userId: userId 
         })
       });
 
-      if (response.ok) { 
-        setTypedMessage(''); 
-        setMediaUrl(''); 
-        setShowMediaInput(false); 
-        setShowEmojis(false); 
-      } else { 
-        // This will now show the actual error from the backend instead of the hardcoded message!
+      if (!response.ok) { 
+        // If it failed, remove the optimistic message and alert the user
+        setMessages(prev => prev.filter(m => m.id !== temporaryId));
         const errorData = await response.json();
         alert(`Backend Error: ${errorData.error}`); 
+      } else {
+        // If it succeeded, quietly fetch the final database state in the background
+        syncCRMState();
       }
     } catch (err) {
+      setMessages(prev => prev.filter(m => m.id !== temporaryId));
       alert("Network Error: Could not reach the server.");
     } finally {
       setSending(false);
@@ -131,6 +150,7 @@ export default function UnifiedInbox() {
         user_id: userId
       });
       
+      syncCRMState(); // Refresh UI instantly
       setTimeout(() => setOrderStatusMessage(''), 4000);
     }
   };
@@ -156,7 +176,7 @@ export default function UnifiedInbox() {
               {customers.map((customer) => {
                 const customerMsgs = messages.filter(m => m.customer_id === customer.id);
                 const lastMsg = customerMsgs[customerMsgs.length - 1];
-                const hasUnread = customerMsgs.some(m => m.status === 'unread');
+                const hasUnread = customerMsgs.some(m => m.status === 'unread' && m.sender === 'customer');
 
                 return (
                   <button
@@ -170,7 +190,9 @@ export default function UnifiedInbox() {
                         <span className={`text-xs truncate block ${hasUnread ? (isDarkMode ? 'font-bold text-white' : 'font-bold text-slate-900') : (isDarkMode ? 'font-medium text-slate-300' : 'font-medium text-slate-700')}`}>{customer.name}</span>
                         <span className="text-[9px] text-slate-500 font-mono">{lastMsg ? new Date(lastMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                       </div>
-                      <p className={`text-xs truncate ${hasUnread ? 'text-indigo-500 font-semibold' : 'text-slate-500'}`}>{lastMsg ? lastMsg.content : 'No transmissions logged.'}</p>
+                      <p className={`text-xs truncate ${hasUnread ? 'text-indigo-500 font-semibold' : 'text-slate-500'}`}>
+                        {lastMsg ? (lastMsg.sender === 'Workspace Manager' ? `You: ${lastMsg.content}` : lastMsg.content) : 'No transmissions logged.'}
+                      </p>
                     </div>
                     {hasUnread && <span className="w-2 h-2 bg-indigo-600 rounded-full self-center flex-shrink-0"></span>}
                   </button>
@@ -207,10 +229,13 @@ export default function UnifiedInbox() {
 
                     return (
                       <div key={msg.id} className={`flex flex-col ${isManager ? 'items-end' : 'items-start'}`}>
-                        <div className={`max-w-md p-3 rounded-2xl text-xs leading-relaxed shadow-sm border ${isManager ? 'bg-indigo-600 text-white border-indigo-700 rounded-tr-none' : (isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700 rounded-tl-none' : 'bg-white text-slate-800 border-slate-200 rounded-tl-none')}`}>
+                        <div className={`max-w-md p-3 rounded-2xl text-xs leading-relaxed shadow-sm border ${isManager ? 'bg-indigo-600 text-white border-indigo-700 rounded-tr-none' : (isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700 rounded-tl-none' : 'bg-white text-slate-800 border-slate-200 rounded-tl-none')} ${msg.status === 'sending' ? 'opacity-70' : ''}`}>
                           {msg.content}
                         </div>
-                        <span className="text-[9px] text-slate-500 mt-1 font-mono px-1">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-[9px] text-slate-500 mt-1 font-mono px-1 flex items-center gap-1">
+                          {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {msg.status === 'sending' && <span className="italic ml-1">Sending...</span>}
+                        </span>
                       </div>
                     );
                   })}
@@ -234,8 +259,8 @@ export default function UnifiedInbox() {
                   )}
 
                   <form onSubmit={handleSendMessage} className="flex gap-2 items-center">
-                    <input type="text" value={typedMessage} onChange={e => setTypedMessage(e.target.value)} disabled={sending} placeholder="Type reply back out to customer channel..." className={`flex-1 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200'}`} />
-                    <button type="submit" disabled={sending || (!typedMessage.trim() && !mediaUrl.trim())} className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-xl disabled:opacity-45 transition flex items-center justify-center flex-shrink-0"><Send size={14} className={sending ? 'animate-spin' : ''} /></button>
+                    <input type="text" value={typedMessage} onChange={e => setTypedMessage(e.target.value)} placeholder="Type reply back out to customer channel..." className={`flex-1 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200'}`} />
+                    <button type="submit" disabled={sending || (!typedMessage.trim() && !mediaUrl.trim())} className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-xl disabled:opacity-45 transition flex items-center justify-center flex-shrink-0"><Send size={14} className={sending ? 'animate-pulse' : ''} /></button>
                   </form>
                 </div>
               </>
