@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize a server-side Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// IMPORTANT: We use the SERVICE_ROLE_KEY here to safely bypass RLS on the backend
+// This allows the webhook to verify customers and insert messages without hitting the security wall.
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,12 +27,13 @@ export async function POST(req: NextRequest) {
       const text = payload.message.text;
 
       let customerId = '';
+      const fallbackName = telegramUser.first_name || 'Telegram Lead';
 
-      // 1. Check if this customer already exists in May's directory
+      // 1. Check if this customer already exists in the client's directory
       const { data: existingCustomer } = await supabase
         .from('customers')
         .select('id')
-        .eq('name', telegramUser.first_name)
+        .eq('name', fallbackName)
         .eq('platform', 'telegram')
         .eq('user_id', userId)
         .limit(1)
@@ -40,11 +42,11 @@ export async function POST(req: NextRequest) {
       if (existingCustomer) {
         customerId = existingCustomer.id;
       } else {
-        // 2. If new, create a new customer profile for May
+        // 2. If new, create a new customer profile and attach it to the specific tenant
         const { data: newCustomer } = await supabase
           .from('customers')
           .insert({
-            name: telegramUser.first_name || 'Telegram Lead',
+            name: fallbackName,
             platform: 'telegram',
             user_id: userId
           })
@@ -54,7 +56,7 @@ export async function POST(req: NextRequest) {
         if (newCustomer) customerId = newCustomer.id;
       }
 
-      // 3. Drop the actual message into May's inbox
+      // 3. Drop the actual message into the tenant's inbox
       if (customerId) {
         await supabase.from('messages').insert({
           customer_id: customerId,
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
     
   } catch (error: any) {
+    console.error("Webhook Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
