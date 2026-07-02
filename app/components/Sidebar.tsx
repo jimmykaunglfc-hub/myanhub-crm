@@ -4,12 +4,15 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { useTheme } from '../context/ThemeContext';
 import { 
   LayoutDashboard, Inbox, Users, ShoppingCart, Settings, LogOut, Package 
 } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { isDarkMode } = useTheme(); // NEW: Hooked up the theme engine!
+  
   const [unreadCount, setUnreadCount] = useState(0);
   const [userEmail, setUserEmail] = useState('Loading...');
   const [userInitial, setUserInitial] = useState('?');
@@ -49,13 +52,13 @@ export default function Sidebar() {
     { name: 'Unified Inbox', path: '/inbox', icon: <Inbox size={18} />, badge: unreadCount },
     { name: 'Customers', path: '/customers', icon: <Users size={18} /> },
     { name: 'Orders', path: '/orders', icon: <ShoppingCart size={18} /> },
-    { name: 'Inventory', path: '/inventory', icon: <Package size={18} /> }, // NEW INVENTORY LINK
+    { name: 'Inventory', path: '/inventory', icon: <Package size={18} /> },
   ];
 
   return (
-    <aside className="w-64 bg-[#0B0F19] text-slate-300 h-screen hidden md:flex flex-col border-r border-slate-800 fixed left-0 top-0 z-50">
-      <div className="h-16 flex items-center px-6 border-b border-slate-800">
-        <h1 className="text-xl font-black text-indigo-500 tracking-tight">MyanHub</h1>
+    <aside className={`w-64 h-screen hidden md:flex flex-col border-r fixed left-0 top-0 z-50 transition-colors duration-200 ${isDarkMode ? 'bg-[#0B0F19] border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+      <div className={`h-16 flex items-center px-6 border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+        <h1 className="text-xl font-black text-indigo-600 dark:text-indigo-500 tracking-tight">MyanHub</h1>
       </div>
 
       <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
@@ -63,9 +66,9 @@ export default function Sidebar() {
           const isActive = pathname === link.path || (link.path !== '/' && pathname.startsWith(link.path));
           
           return (
-            <Link key={link.name} href={link.path} className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors font-medium text-sm ${isActive ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' : 'hover:bg-slate-800/50 hover:text-slate-100'}`}>
+            <Link key={link.name} href={link.path} className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors font-medium text-sm ${isActive ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' : (isDarkMode ? 'hover:bg-slate-800/50 hover:text-slate-100' : 'hover:bg-slate-200/50 hover:text-slate-900')}`}>
               <div className="flex items-center gap-3">
-                <span className={isActive ? 'text-indigo-200' : 'text-slate-500'}>{link.icon}</span>
+                <span className={isActive ? 'text-indigo-200' : (isDarkMode ? 'text-slate-500' : 'text-slate-400')}>{link.icon}</span>
                 {link.name}
               </div>
               
@@ -79,19 +82,19 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="p-4 border-t border-slate-800 space-y-2">
-        <Link href="/settings" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-medium text-sm ${pathname === '/settings' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/50 hover:text-slate-100'}`}>
-          <Settings size={18} className="text-slate-500" /> Settings
+      <div className={`p-4 border-t space-y-2 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+        <Link href="/settings" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-medium text-sm ${pathname === '/settings' ? (isDarkMode ? 'bg-slate-800 text-white' : 'bg-slate-200 text-slate-900') : (isDarkMode ? 'hover:bg-slate-800/50 hover:text-slate-100' : 'hover:bg-slate-200/50 hover:text-slate-900')}`}>
+          <Settings size={18} className={isDarkMode ? 'text-slate-500' : 'text-slate-400'} /> Settings
         </Link>
         
-        <div className="flex items-center justify-between bg-slate-900/50 border border-slate-800 p-2.5 rounded-xl mt-2">
+        <div className={`flex items-center justify-between border p-2.5 rounded-xl mt-2 ${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
           <div className="flex items-center gap-2 truncate">
             <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-black text-white flex-shrink-0">
               {userInitial}
             </div>
-            <span className="text-xs font-bold truncate text-slate-300">{userEmail.split('@')[0].toUpperCase()}</span>
+            <span className={`text-xs font-bold truncate ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{userEmail.split('@')[0].toUpperCase()}</span>
           </div>
-          <button onClick={() => supabase.auth.signOut().then(() => window.location.href='/login')} className="text-slate-500 hover:text-rose-400 transition-colors p-1">
+          <button onClick={() => supabase.auth.signOut().then(() => window.location.href='/login')} className={`transition-colors p-1 ${isDarkMode ? 'text-slate-500 hover:text-rose-400' : 'text-slate-400 hover:text-rose-500'}`}>
             <LogOut size={14} />
           </button>
         </div>
