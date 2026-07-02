@@ -13,7 +13,7 @@ interface Message { id: string; customer_id: string; sender: string; content: st
 export default function UnifiedInbox() {
   const { isDarkMode } = useTheme();
   
-  // NEW: Store the logged-in user's ID to pass Row Level Security (RLS)
+  // CRITICAL: We now capture the tenant's User ID to pass the backend security checks
   const [userId, setUserId] = useState<string | null>(null);
   
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -33,7 +33,6 @@ export default function UnifiedInbox() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const quickEmojis = ["❤️", "👍", "🙏", "😊", "📦", "💵", "✨", "💯"];
 
-  // 1. Fetch the user's ID on load
   useEffect(() => {
     const fetchUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -67,28 +66,49 @@ export default function UnifiedInbox() {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCustomerId || (!typedMessage.trim() && !mediaUrl.trim())) return;
+    
+    // We strictly check for the userId before trying to send
+    if (!selectedCustomerId || (!typedMessage.trim() && !mediaUrl.trim()) || !userId) return;
+    
     setSending(true);
-    const response = await fetch('/api/send-message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerId: selectedCustomerId, text: typedMessage, mediaUrl })
-    });
-    if (response.ok) { setTypedMessage(''); setMediaUrl(''); setShowMediaInput(false); setShowEmojis(false); } 
-    else { alert("Outbound gateway issue. Ensure Vercel environment keys are redeployed."); }
-    setSending(false);
+    
+    try {
+      const response = await fetch('/api/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // We now securely pass the userId directly into the backend payload
+        body: JSON.stringify({ 
+          customerId: selectedCustomerId, 
+          text: typedMessage, 
+          mediaUrl,
+          userId: userId 
+        })
+      });
+
+      if (response.ok) { 
+        setTypedMessage(''); 
+        setMediaUrl(''); 
+        setShowMediaInput(false); 
+        setShowEmojis(false); 
+      } else { 
+        // This will now show the actual error from the backend instead of the hardcoded message!
+        const errorData = await response.json();
+        alert(`Backend Error: ${errorData.error}`); 
+      }
+    } catch (err) {
+      alert("Network Error: Could not reach the server.");
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleCreateManualOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Ensure we have a userId before attempting to save
     if (!selectedCustomerId || !orderAmount || !userId) return;
     
     setOrderStatusMessage('Injecting transaction parameters...');
     const targetIdString = orderIdInput.trim() || `MH-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // NEW: Attach user_id to bypass RLS policies
     const { error } = await supabase.from('orders').insert({
       customer_id: selectedCustomerId, 
       order_id_string: targetIdString, 
@@ -103,7 +123,6 @@ export default function UnifiedInbox() {
       setOrderStatusMessage(`Order ${targetIdString} Submitted!`);
       setOrderAmount(''); setOrderIdInput('');
       
-      // NEW: Attach user_id to the system notification as well
       await supabase.from('messages').insert({
         customer_id: selectedCustomerId, 
         sender: 'Workspace Manager',
