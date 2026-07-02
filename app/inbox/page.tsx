@@ -12,6 +12,10 @@ interface Message { id: string; customer_id: string; sender: string; content: st
 
 export default function UnifiedInbox() {
   const { isDarkMode } = useTheme();
+  
+  // NEW: Store the logged-in user's ID to pass Row Level Security (RLS)
+  const [userId, setUserId] = useState<string | null>(null);
+  
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -28,6 +32,15 @@ export default function UnifiedInbox() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const quickEmojis = ["❤️", "👍", "🙏", "😊", "📦", "💵", "✨", "💯"];
+
+  // 1. Fetch the user's ID on load
+  useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) setUserId(user.id);
+    };
+    fetchUser();
+  }, []);
 
   const syncCRMState = async () => {
     const { data: custData } = await supabase.from('customers').select('*');
@@ -68,23 +81,37 @@ export default function UnifiedInbox() {
 
   const handleCreateManualOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCustomerId || !orderAmount) return;
+    
+    // Ensure we have a userId before attempting to save
+    if (!selectedCustomerId || !orderAmount || !userId) return;
+    
     setOrderStatusMessage('Injecting transaction parameters...');
     const targetIdString = orderIdInput.trim() || `MH-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    // NEW: Attach user_id to bypass RLS policies
     const { error } = await supabase.from('orders').insert({
-      customer_id: selectedCustomerId, order_id_string: targetIdString, total_amount: parseFloat(orderAmount), status: 'pending'
+      customer_id: selectedCustomerId, 
+      order_id_string: targetIdString, 
+      total_amount: parseFloat(orderAmount), 
+      status: 'pending',
+      user_id: userId 
     });
 
-    if (error) { setOrderStatusMessage(`Error: ${error.message}`); } 
-    else {
+    if (error) { 
+      setOrderStatusMessage(`Error: ${error.message}`); 
+    } else {
       setOrderStatusMessage(`Order ${targetIdString} Submitted!`);
       setOrderAmount(''); setOrderIdInput('');
+      
+      // NEW: Attach user_id to the system notification as well
       await supabase.from('messages').insert({
-        customer_id: selectedCustomerId, sender: 'Workspace Manager',
+        customer_id: selectedCustomerId, 
+        sender: 'Workspace Manager',
         content: `[System Notification] Generated order invoice ${targetIdString} for $${parseFloat(orderAmount).toFixed(2)}. Status initialized to Pending Fulfillment.`,
-        status: 'read'
+        status: 'read',
+        user_id: userId
       });
+      
       setTimeout(() => setOrderStatusMessage(''), 4000);
     }
   };
@@ -222,8 +249,9 @@ export default function UnifiedInbox() {
                   <button type="submit" className={`w-full text-white font-bold text-xs py-2.5 rounded-lg transition shadow flex items-center justify-center gap-1.5 ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-900 hover:bg-indigo-600'}`}><Plus size={14} /> Create Order</button>
                 </form>
                 {orderStatusMessage && (
-                  <div className={`p-3 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center gap-2 border ${isDarkMode ? 'bg-indigo-950/40 text-indigo-400 border-indigo-900' : 'bg-indigo-50 text-indigo-700 border-indigo-100'}`}>
-                    <CheckCircle2 size={12} className="flex-shrink-0" /> {orderStatusMessage}
+                  <div className={`p-3 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center gap-2 border ${orderStatusMessage.includes('Error') ? (isDarkMode ? 'bg-rose-950/40 text-rose-400 border-rose-900' : 'bg-rose-50 text-rose-700 border-rose-200') : (isDarkMode ? 'bg-indigo-950/40 text-indigo-400 border-indigo-900' : 'bg-indigo-50 text-indigo-700 border-indigo-100')}`}>
+                    {orderStatusMessage.includes('Error') ? null : <CheckCircle2 size={12} className="flex-shrink-0" />}
+                    {orderStatusMessage}
                   </div>
                 )}
               </div>
