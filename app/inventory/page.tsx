@@ -50,13 +50,17 @@ export default function Inventory() {
 
   const fetchInventory = async (uid: string) => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('inventory')
       .select('*')
       .eq('user_id', uid)
       .order('created_at', { ascending: false });
     
-    if (data) setInventory(data as Product[]);
+    if (error) {
+      console.error("Fetch Error:", error);
+    } else if (data) {
+      setInventory(data as Product[]);
+    }
     setLoading(false);
   };
 
@@ -90,23 +94,37 @@ export default function Inventory() {
       stock_quantity: parseInt(formQty, 10) || 0,
     };
 
-    if (editingId) {
-      // Update existing
-      await supabase.from('inventory').update(payload).eq('id', editingId);
-    } else {
-      // Create new
-      await supabase.from('inventory').insert(payload);
-    }
+    try {
+      if (editingId) {
+        // Update existing
+        const { error } = await supabase.from('inventory').update(payload).eq('id', editingId);
+        if (error) throw error;
+      } else {
+        // Create new
+        const { error } = await supabase.from('inventory').insert(payload);
+        if (error) throw error;
+      }
 
-    await fetchInventory(userId);
-    setIsModalOpen(false);
-    setFormProcessing(false);
+      await fetchInventory(userId);
+      setIsModalOpen(false);
+    } catch (error: any) {
+      // NEW: Catch the error and force a popup so we know EXACTLY what failed
+      alert(`Database Error: ${error.message}`);
+    } finally {
+      setFormProcessing(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this product?")) return;
-    await supabase.from('inventory').delete().eq('id', id);
-    setInventory(prev => prev.filter(p => p.id !== id));
+    
+    try {
+      const { error } = await supabase.from('inventory').delete().eq('id', id);
+      if (error) throw error;
+      setInventory(prev => prev.filter(p => p.id !== id));
+    } catch (error: any) {
+      alert(`Delete Error: ${error.message}`);
+    }
   };
 
   // Derived Metrics
