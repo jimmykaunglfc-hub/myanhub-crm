@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { 
-  LayoutDashboard, Inbox, Users, ShoppingCart, Settings, LogOut 
+  LayoutDashboard, Inbox, Users, ShoppingCart, Settings, LogOut, Package 
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -15,7 +15,6 @@ export default function Sidebar() {
   const [userInitial, setUserInitial] = useState('?');
 
   useEffect(() => {
-    // 1. Fetch user profile
     const fetchUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user?.email) {
@@ -25,7 +24,6 @@ export default function Sidebar() {
     };
     fetchUser();
 
-    // 2. Fetch the initial unread message count
     const fetchUnreadCount = async () => {
       const { count } = await supabase
         .from('messages')
@@ -37,7 +35,6 @@ export default function Sidebar() {
     };
     fetchUnreadCount();
 
-    // 3. REAL-TIME LISTENER: Watch for new inbound messages or messages being marked 'read'
     const channel = supabase.channel('sidebar-notifications')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
         fetchUnreadCount();
@@ -52,17 +49,15 @@ export default function Sidebar() {
     { name: 'Unified Inbox', path: '/inbox', icon: <Inbox size={18} />, badge: unreadCount },
     { name: 'Customers', path: '/customers', icon: <Users size={18} /> },
     { name: 'Orders', path: '/orders', icon: <ShoppingCart size={18} /> },
+    { name: 'Inventory', path: '/inventory', icon: <Package size={18} /> }, // NEW INVENTORY LINK
   ];
 
   return (
     <aside className="w-64 bg-[#0B0F19] text-slate-300 h-screen hidden md:flex flex-col border-r border-slate-800 fixed left-0 top-0 z-50">
-      
-      {/* Logo */}
       <div className="h-16 flex items-center px-6 border-b border-slate-800">
         <h1 className="text-xl font-black text-indigo-500 tracking-tight">MyanHub</h1>
       </div>
 
-      {/* Main Navigation */}
       <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
         {navLinks.map((link) => {
           const isActive = pathname === link.path || (link.path !== '/' && pathname.startsWith(link.path));
@@ -74,7 +69,6 @@ export default function Sidebar() {
                 {link.name}
               </div>
               
-              {/* Live Notification Badge */}
               {link.badge !== undefined && link.badge > 0 && (
                 <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm">
                   {link.badge > 99 ? '99+' : link.badge}
@@ -85,7 +79,6 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Bottom Settings & User */}
       <div className="p-4 border-t border-slate-800 space-y-2">
         <Link href="/settings" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-medium text-sm ${pathname === '/settings' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/50 hover:text-slate-100'}`}>
           <Settings size={18} className="text-slate-500" /> Settings
