@@ -5,10 +5,12 @@ import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
-import { Send, Image, Smile, MessageSquare, Plus, ShoppingBag, DollarSign, ClipboardList, CheckCircle2 } from 'lucide-react';
+import { Send, Image, Smile, MessageSquare, Plus, ShoppingBag, DollarSign, ClipboardList, CheckCircle2, Package, AlertTriangle } from 'lucide-react';
 
 interface Customer { id: string; name: string; platform: string; }
 interface Message { id: string; customer_id: string; sender: string; content: string; created_at: string; status: string; }
+// NEW: Inventory Interface
+interface Product { id: string; name: string; price: number; stock_quantity: number; }
 
 export default function UnifiedInbox() {
   const { isDarkMode } = useTheme();
@@ -17,6 +19,7 @@ export default function UnifiedInbox() {
   
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [inventory, setInventory] = useState<Product[]>([]); // NEW: Store active inventory
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   
   const [typedMessage, setTypedMessage] = useState('');
@@ -25,7 +28,9 @@ export default function UnifiedInbox() {
   const [showMediaInput, setShowMediaInput] = useState(false);
   const [sending, setSending] = useState(false);
 
-  const [orderAmount, setOrderAmount] = useState('');
+  // NEW: Updated Order States for Inventory Linking
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [orderQuantity, setOrderQuantity] = useState(1);
   const [orderIdInput, setOrderIdInput] = useState('');
   const [orderStatusMessage, setOrderStatusMessage] = useState('');
 
@@ -41,21 +46,29 @@ export default function UnifiedInbox() {
   }, []);
 
   const syncCRMState = async () => {
+    if (!userId) return;
+    
     const { data: custData } = await supabase.from('customers').select('*');
     const { data: msgData } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
+    // NEW: Fetch available inventory for this tenant
+    const { data: invData } = await supabase.from('inventory').select('id, name, price, stock_quantity').eq('user_id', userId);
+    
     if (custData) setCustomers(custData);
     if (msgData) setMessages(msgData);
+    if (invData) setInventory(invData as Product[]);
   };
 
   useEffect(() => {
-    syncCRMState();
-    // Only listen for new incoming messages from customers to prevent double-rendering our optimistic updates
+    if (userId) syncCRMState();
+    
     const channel = supabase.channel('live-inbox-feed')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: "sender=eq.customer" }, syncCRMState)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, syncCRMState)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, syncCRMState) // Listen to stock changes
       .subscribe();
+      
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -73,7 +86,6 @@ export default function UnifiedInbox() {
     const messageContent = typedMessage || `[Media Attachment] ${mediaUrl}`;
     const temporaryId = `temp-${Date.now()}`;
     
-    // 1. OPTIMISTIC UI UPDATE: Instantly display the message on the screen!
     const optimisticMessage: Message = {
       id: temporaryId,
       customer_id: selectedCustomerId,
@@ -85,14 +97,12 @@ export default function UnifiedInbox() {
 
     setMessages(prev => [...prev, optimisticMessage]);
     
-    // Clear inputs instantly so the user can keep typing
     setTypedMessage(''); 
     setMediaUrl(''); 
     setShowMediaInput(false); 
     setShowEmojis(false); 
     
     try {
-      // 2. BACKGROUND PROCESSING: Tell the server to handle the Telegram API
       const response = await fetch('/api/send-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -105,12 +115,10 @@ export default function UnifiedInbox() {
       });
 
       if (!response.ok) { 
-        // If it failed, remove the optimistic message and alert the user
         setMessages(prev => prev.filter(m => m.id !== temporaryId));
         const errorData = await response.json();
         alert(`Backend Error: ${errorData.error}`); 
       } else {
-        // If it succeeded, quietly fetch the final database state in the background
         syncCRMState();
       }
     } catch (err) {
@@ -123,40 +131,69 @@ export default function UnifiedInbox() {
 
   const handleCreateManualOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCustomerId || !orderAmount || !userId) return;
+    if (!selectedCustomerId || !selectedProductId || !userId) return;
     
-    setOrderStatusMessage('Injecting transaction parameters...');
-    const targetIdString = orderIdInput.trim() || `MH-${Math.floor(1000 + Math.random() * 9000)}`;
+    // 1. Identify the product and check stock
+    const product = inventory.find(p => p.id === selectedProductId);
+    if (!product) return;
+    
+    if (product.stock_quantity < orderQuantity) {
+      setOrderStatusMessage(`Error: Not enough stock! Only ${product.stock_quantity} left.`);
+      return;
+    }
 
-    const { error } = await supabase.from('orders').insert({
+    setOrderStatusMessage('Processing order & deducting stock...');
+    const targetIdString = orderIdInput.trim() || `MH-${Math.floor(1000 + Math.random() * 9000)}`;
+    const totalAmount = product.price * orderQuantity;
+
+    // 2. Insert the Order
+    const { error: orderError } = await supabase.from('orders').insert({
       customer_id: selectedCustomerId, 
       order_id_string: targetIdString, 
-      total_amount: parseFloat(orderAmount), 
+      total_amount: totalAmount, 
       status: 'pending',
       user_id: userId 
     });
 
-    if (error) { 
-      setOrderStatusMessage(`Error: ${error.message}`); 
-    } else {
-      setOrderStatusMessage(`Order ${targetIdString} Submitted!`);
-      setOrderAmount(''); setOrderIdInput('');
-      
-      await supabase.from('messages').insert({
-        customer_id: selectedCustomerId, 
-        sender: 'Workspace Manager',
-        content: `[System Notification] Generated order invoice ${targetIdString} for $${parseFloat(orderAmount).toFixed(2)}. Status initialized to Pending Fulfillment.`,
-        status: 'read',
-        user_id: userId
-      });
-      
-      syncCRMState(); // Refresh UI instantly
-      setTimeout(() => setOrderStatusMessage(''), 4000);
+    if (orderError) { 
+      setOrderStatusMessage(`Order Error: ${orderError.message}`); 
+      return;
     }
+
+    // 3. Deduct the Stock from Inventory
+    const { error: stockError } = await supabase
+      .from('inventory')
+      .update({ stock_quantity: product.stock_quantity - orderQuantity })
+      .eq('id', product.id);
+
+    if (stockError) {
+      setOrderStatusMessage(`Stock Deduction Error: ${stockError.message}`);
+      return;
+    }
+
+    // 4. Log the success and generate the notification message
+    setOrderStatusMessage(`Order ${targetIdString} Submitted!`);
+    setSelectedProductId(''); 
+    setOrderQuantity(1);
+    setOrderIdInput('');
+    
+    await supabase.from('messages').insert({
+      customer_id: selectedCustomerId, 
+      sender: 'Workspace Manager',
+      content: `[System Notification] Order ${targetIdString} created for ${orderQuantity}x ${product.name}. Total: $${totalAmount.toFixed(2)}. Status: Pending.`,
+      status: 'read',
+      user_id: userId
+    });
+    
+    syncCRMState();
+    setTimeout(() => setOrderStatusMessage(''), 4000);
   };
 
   const activeChatCustomer = customers.find(c => c.id === selectedCustomerId);
   const filteredMessages = messages.filter(m => m.customer_id === selectedCustomerId);
+
+  // Filter out products that have 0 stock so we don't accidentally oversell
+  const availableInventory = inventory.filter(p => p.stock_quantity > 0);
 
   return (
     <div className={`min-h-screen flex font-sans h-screen overflow-hidden transition-colors duration-200 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
@@ -269,8 +306,8 @@ export default function UnifiedInbox() {
             )}
           </div>
 
-          {/* COLUMN 3: Order Panel */}
-          <div className={`hidden lg:flex w-64 flex-col flex-shrink-0 p-5 overflow-y-auto transition-colors ${isDarkMode ? 'bg-slate-900 border-l border-slate-800' : 'bg-white'}`}>
+          {/* COLUMN 3: Order Panel (UPDATED FOR INVENTORY) */}
+          <div className={`hidden lg:flex w-72 flex-col flex-shrink-0 p-5 overflow-y-auto transition-colors ${isDarkMode ? 'bg-slate-900 border-l border-slate-800' : 'bg-white'}`}>
             {selectedCustomerId && activeChatCustomer ? (
               <div className="space-y-6 animate-fade-in">
                 <div>
@@ -278,23 +315,75 @@ export default function UnifiedInbox() {
                   <p className="text-[11px] text-slate-500 leading-relaxed">Book a deal for <b className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>{activeChatCustomer.name}</b> directly into the fulfillment grid.</p>
                 </div>
                 <hr className={isDarkMode ? 'border-slate-800' : 'border-slate-100'} />
+                
                 <form onSubmit={handleCreateManualOrder} className="space-y-4">
+                  
+                  {/* Select Product */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">GROSS DEAL VALUE ($)</label>
-                    <div className="relative rounded-lg shadow-sm">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><DollarSign size={12} className="text-slate-500" /></div>
-                      <input type="number" step="0.01" required value={orderAmount} onChange={e => setOrderAmount(e.target.value)} placeholder="0.00" className={`w-full pl-7 pr-3 py-2 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-800'}`} />
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Select Product</label>
+                    <div className="relative">
+                      <Package size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                      <select 
+                        required 
+                        value={selectedProductId} 
+                        onChange={e => setSelectedProductId(e.target.value)}
+                        className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 border appearance-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
+                      >
+                        <option value="" disabled>Choose an item...</option>
+                        {availableInventory.length === 0 ? (
+                          <option value="" disabled>No items in stock.</option>
+                        ) : (
+                          availableInventory.map(p => (
+                            <option key={p.id} value={p.id}>{p.name} - ${p.price.toFixed(2)} ({p.stock_quantity} left)</option>
+                          ))
+                        )}
+                      </select>
                     </div>
                   </div>
+
+                  {/* Quantity */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Quantity</label>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      required 
+                      value={orderQuantity} 
+                      onChange={e => setOrderQuantity(parseInt(e.target.value) || 1)} 
+                      className={`w-full px-3 py-2 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`} 
+                    />
+                  </div>
+
+                  {/* Custom Order ID (Optional) */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">CUSTOM ORDER NUMBER</label>
-                    <input type="text" value={orderIdInput} onChange={e => setOrderIdInput(e.target.value)} placeholder="Leave blank to auto-generate" className={`w-full px-3 py-2 rounded-lg text-xs font-medium focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-800'}`} />
+                    <input 
+                      type="text" 
+                      value={orderIdInput} 
+                      onChange={e => setOrderIdInput(e.target.value)} 
+                      placeholder="Leave blank to auto-generate" 
+                      className={`w-full px-3 py-2 rounded-lg text-xs font-medium focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-800'}`} 
+                    />
                   </div>
-                  <button type="submit" className={`w-full text-white font-bold text-xs py-2.5 rounded-lg transition shadow flex items-center justify-center gap-1.5 ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-900 hover:bg-indigo-600'}`}><Plus size={14} /> Create Order</button>
+
+                  {/* Dynamic Total Calculation */}
+                  {selectedProductId && (
+                    <div className={`p-3 rounded-lg border flex justify-between items-center ${isDarkMode ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-indigo-50 border-indigo-100'}`}>
+                      <span className={`text-[10px] font-bold uppercase ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Total Due</span>
+                      <span className={`text-sm font-black ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                        ${((inventory.find(p => p.id === selectedProductId)?.price || 0) * orderQuantity).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={!selectedProductId} className={`w-full text-white font-bold text-xs py-2.5 rounded-lg transition shadow flex items-center justify-center gap-1.5 disabled:opacity-50 ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-900 hover:bg-indigo-600'}`}>
+                    <Plus size={14} /> Create Order
+                  </button>
                 </form>
+                
                 {orderStatusMessage && (
-                  <div className={`p-3 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center gap-2 border ${orderStatusMessage.includes('Error') ? (isDarkMode ? 'bg-rose-950/40 text-rose-400 border-rose-900' : 'bg-rose-50 text-rose-700 border-rose-200') : (isDarkMode ? 'bg-indigo-950/40 text-indigo-400 border-indigo-900' : 'bg-indigo-50 text-indigo-700 border-indigo-100')}`}>
-                    {orderStatusMessage.includes('Error') ? null : <CheckCircle2 size={12} className="flex-shrink-0" />}
+                  <div className={`p-3 rounded-lg text-[11px] font-semibold text-center flex items-center justify-center gap-2 border ${orderStatusMessage.includes('Error') ? (isDarkMode ? 'bg-rose-950/40 text-rose-400 border-rose-900' : 'bg-rose-50 text-rose-700 border-rose-200') : (isDarkMode ? 'bg-emerald-950/40 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200')}`}>
+                    {orderStatusMessage.includes('Error') ? <AlertTriangle size={12} className="flex-shrink-0" /> : <CheckCircle2 size={12} className="flex-shrink-0" />}
                     {orderStatusMessage}
                   </div>
                 )}
