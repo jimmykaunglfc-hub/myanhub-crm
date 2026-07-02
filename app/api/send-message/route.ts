@@ -3,14 +3,33 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: Request) {
   try {
-    const { customerId, text, mediaUrl } = await request.json();
+    // 1. Extract the payload, including the new userId sent from the frontend
+    const { customerId, text, mediaUrl, userId } = await request.json();
+
+    if (!userId || !customerId) {
+      return NextResponse.json({ error: 'Missing required tenant or customer ID' }, { status: 400 });
+    }
 
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 1. Fetch target user's data coordinates
+    // 2. DYNAMIC TOKEN LOOKUP: Fetch the specific client's Telegram token from their saved integrations
+    const { data: integration, error: integrationErr } = await supabaseAdmin
+      .from('workspace_integrations')
+      .select('token')
+      .eq('user_id', userId)
+      .eq('channel', 'telegram')
+      .single();
+
+    if (integrationErr || !integration?.token) {
+      return NextResponse.json({ error: 'Telegram integration not found for this workspace' }, { status: 404 });
+    }
+
+    const botToken = integration.token;
+
+    // 3. Fetch target user's data coordinates
     const { data: customer, error: custErr } = await supabaseAdmin
       .from('customers')
       .select('social_profile_link')
@@ -27,11 +46,10 @@ export async function POST(request: Request) {
     
     if (!chatId) return NextResponse.json({ error: 'Malformed profile channel metadata' }, { status: 400 });
 
-    const botToken = process.env.TELEGRAM_BOT_TOKEN; 
     let telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
     let payload: any = { chat_id: chatId };
 
-    // 2. Adjust payload dynamically based on text vs image attachments
+    // 4. Adjust payload dynamically based on text vs image attachments
     if (mediaUrl) {
       telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendPhoto`;
       payload.photo = mediaUrl;
@@ -40,7 +58,7 @@ export async function POST(request: Request) {
       payload.text = text;
     }
 
-    // 3. Fire real outbound request out to Telegram servers
+    // 5. Fire real outbound request out to Telegram servers using the Client's specific token
     const telegramResponse = await fetch(telegramApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -52,26 +70,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Telegram gateway rejected push: ${errDetails}` }, { status: 502 });
     }
 
-    // 4. Update message state to clear unread counts on current conversation
+    // 6. Update message state to clear unread counts on current conversation
     await supabaseAdmin
       .from('messages')
       .update({ status: 'read' })
       .eq('customer_id', customerId);
 
-    // 5. Append agent reply record to database log stream for transparent display
+    // 7. Append agent reply record securely to database log stream
     const { data: loggedMsg } = await supabaseAdmin
       .from('messages')
       .insert({
         customer_id: customerId,
         sender: 'Workspace Manager',
         content: mediaUrl ? `[Sent Image Attachment] ${text || ""}` : text,
-        status: 'read'
+        status: 'read',
+        user_id: userId // CRITICAL: This ensures the message passes Row Level Security
       })
       .select()
       .single();
 
     return NextResponse.json({ success: true, message: loggedMsg });
   } catch (err) {
+    console.error("Outbound Error:", err);
     return NextResponse.json({ error: 'Internal pipeline failure' }, { status: 500 });
   }
 }
