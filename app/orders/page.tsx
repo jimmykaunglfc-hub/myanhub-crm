@@ -8,7 +8,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Clock, Package, Truck, CheckCircle2, Trash2, Calendar, 
-  Camera, Receipt, X, Image as ImageIcon 
+  Receipt, Image as ImageIcon, UserCircle
 } from 'lucide-react';
 
 interface Order {
@@ -16,11 +16,18 @@ interface Order {
   order_id_string: string;
   total_amount: number;
   status: 'pending' | 'processing' | 'in_transit' | 'fulfilled';
-  payment_status: string; // NEW
-  delivery_evidence_url: string | null; // NEW
+  delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
+  assigned_driver_id: string | null;
+  payment_status: string;
+  delivery_evidence_url: string | null;
   created_at: string;
   customer_id: string;
   customers: { name: string } | null;
+}
+
+interface Driver {
+  id: string;
+  full_name: string;
 }
 
 const COLUMNS = [
@@ -36,14 +43,8 @@ export default function OrdersPipeline() {
   
   const [userId, setUserId] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Delivery Modal States
-  const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
-  const [activeDeliveryOrderId, setActiveDeliveryOrderId] = useState<string | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState('Pending');
-  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
-  const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -57,101 +58,68 @@ export default function OrdersPipeline() {
     checkSession();
   }, [router]);
 
-  const fetchOrders = async () => {
+  const fetchDashboardData = async () => {
     if (!userId) return;
-    const { data, error } = await supabase
+    
+    // 1. Fetch Orders
+    const { data: orderData } = await supabase
       .from('orders')
       .select('*, customers(name)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (!error && data) setOrders(data as Order[]);
+    // 2. Fetch Drivers in this Workspace
+    const { data: driverData } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('workspace_id', userId)
+      .eq('role', 'driver');
+
+    if (orderData) setOrders(orderData as Order[]);
+    if (driverData) setDrivers(driverData as Driver[]);
     setLoading(false);
   };
 
-  useEffect(() => { if (userId) fetchOrders(); }, [userId]);
+  useEffect(() => { if (userId) fetchDashboardData(); }, [userId]);
 
   useEffect(() => {
     if (!userId) return;
     const channel = supabase.channel('live-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchOrders)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchDashboardData)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [userId]);
 
-  const handleDragStart = (e: React.DragEvent, orderId: string) => {
-    e.dataTransfer.setData('orderId', orderId);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); 
-  };
+  const handleDragStart = (e: React.DragEvent, orderId: string) => { e.dataTransfer.setData('orderId', orderId); };
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
 
   const handleDrop = async (e: React.DragEvent, newStatus: string) => {
     e.preventDefault();
     const orderId = e.dataTransfer.getData('orderId');
     if (!orderId) return;
 
-    // INTERCEPT: If dropping into 'fulfilled/delivered', open the camera modal!
+    // Prevent manually dragging to Delivered (must be done by driver app now)
     if (newStatus === 'fulfilled') {
-      setActiveDeliveryOrderId(orderId);
-      setDeliveryModalOpen(true);
-      return; 
+      alert("Notice: Orders must be marked as Delivered by the Driver via the mobile app to ensure evidence capture.");
+      return;
     }
 
-    // Otherwise, move normally (Pending -> Processing -> Transit)
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus as any } : o));
-    await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+    // If dropped into In Transit, ensure it resets to unassigned
+    let updates: any = { status: newStatus };
+    if (newStatus === 'in_transit') {
+      updates.delivery_state = 'unassigned';
+      updates.assigned_driver_id = null;
+    }
+
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updates } : o));
+    await supabase.from('orders').update(updates).eq('id', orderId);
   };
 
-  // NEW: The Delivery Submission Engine (Handles Photo Uploads)
-  const submitDeliveryConfirmation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeDeliveryOrderId) return;
-    setIsSubmittingDelivery(true);
-
-    try {
-      let uploadedUrl = null;
-
-      // 1. Upload photo to Supabase Storage if driver attached one
-      if (evidenceFile) {
-        const fileExt = evidenceFile.name.split('.').pop();
-        const fileName = `delivery-${activeDeliveryOrderId}-${Math.random()}.${fileExt}`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from('delivery_evidence')
-          .upload(fileName, evidenceFile);
-          
-        if (uploadError) throw uploadError;
-
-        // Get the public URL of the uploaded image
-        const { data: { publicUrl } } = supabase.storage
-          .from('delivery_evidence')
-          .getPublicUrl(fileName);
-          
-        uploadedUrl = publicUrl;
-      }
-
-      // 2. Update the Order Database Record
-      const { error: dbError } = await supabase.from('orders').update({ 
-        status: 'fulfilled',
-        payment_status: paymentStatus,
-        delivery_evidence_url: uploadedUrl
-      }).eq('id', activeDeliveryOrderId);
-
-      if (dbError) throw dbError;
-
-      // Close modal and refresh
-      setDeliveryModalOpen(false);
-      setEvidenceFile(null);
-      setPaymentStatus('Pending');
-      fetchOrders();
-
-    } catch (error: any) {
-      alert(`Delivery confirmation failed: ${error.message}`);
-    } finally {
-      setIsSubmittingDelivery(false);
-    }
+  const handleAssignDriver = async (orderId: string, driverId: string) => {
+    await supabase.from('orders').update({ 
+      assigned_driver_id: driverId,
+      delivery_state: 'assigned'
+    }).eq('id', orderId);
   };
 
   const handleDeleteOrder = async (orderId: string) => {
@@ -172,14 +140,12 @@ export default function OrdersPipeline() {
           <div className="mb-6 flex-shrink-0">
             <h2 className="text-2xl font-bold tracking-tight">Dispatch & Order Pipeline</h2>
             <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              Drag orders to 'Delivered' to capture signature, photo evidence, and payment status.
+              Drag orders to 'In Transit' to open them to your driver pool for fulfillment.
             </p>
           </div>
 
           {loading ? (
-            <div className="flex-1 flex items-center justify-center font-mono text-sm animate-pulse text-indigo-500">
-              LOADING PIPELINE DATA...
-            </div>
+            <div className="flex-1 flex items-center justify-center font-mono text-sm animate-pulse text-indigo-500">LOADING PIPELINE DATA...</div>
           ) : (
             <div className="flex-1 flex gap-6 overflow-x-auto pb-4 custom-scrollbar">
               {COLUMNS.map(column => {
@@ -205,9 +171,9 @@ export default function OrdersPipeline() {
                       {columnOrders.map(order => (
                         <div
                           key={order.id}
-                          draggable
+                          draggable={column.id !== 'fulfilled'} // Can't drag out of fulfilled
                           onDragStart={(e) => handleDragStart(e, order.id)}
-                          className={`p-4 rounded-xl border shadow-sm cursor-grab active:cursor-grabbing transition-all hover:-translate-y-0.5 ${isDarkMode ? 'bg-slate-950 border-slate-800 hover:border-slate-700' : 'bg-white border-slate-200 hover:border-slate-300'}`}
+                          className={`p-4 rounded-xl border shadow-sm ${column.id !== 'fulfilled' ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} transition-all ${isDarkMode ? 'bg-slate-950 border-slate-800 hover:border-slate-700' : 'bg-white border-slate-200 hover:border-slate-300'}`}
                         >
                           <div className="flex justify-between items-start mb-3">
                             <div className="text-sm font-bold font-mono">{order.order_id_string}</div>
@@ -230,7 +196,36 @@ export default function OrdersPipeline() {
                             </div>
                           </div>
 
-                          {/* Render Delivery Tags if Delivered */}
+                          {/* IN TRANSIT DISPATCH CONTROLS */}
+                          {column.id === 'in_transit' && (
+                            <div className={`mb-4 p-2.5 rounded-lg border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                              {order.delivery_state === 'unassigned' ? (
+                                <div>
+                                  <label className="text-[10px] font-bold uppercase text-amber-500 mb-1 flex items-center gap-1"><UserCircle size={12}/> Needs Assignment</label>
+                                  <select 
+                                    value={order.assigned_driver_id || ""}
+                                    onChange={(e) => handleAssignDriver(order.id, e.target.value)}
+                                    className={`w-full text-xs p-1.5 rounded border focus:outline-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`}
+                                  >
+                                    <option value="" disabled>-- Assign Driver --</option>
+                                    {drivers.map(d => <option key={d.id} value={d.id}>{d.full_name}</option>)}
+                                  </select>
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-1.5">
+                                    <span className="text-indigo-500 flex items-center gap-1"><UserCircle size={12}/> {drivers.find(d => d.id === order.assigned_driver_id)?.full_name || 'Driver'}</span>
+                                    <span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>{order.delivery_state.replace('_', ' ')}</span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                                    <div className={`h-full bg-indigo-500 transition-all duration-500 ${order.delivery_state === 'assigned' ? 'w-1/3' : order.delivery_state === 'picked_up' ? 'w-2/3' : 'w-full'}`}></div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* DELIVERED PROOF */}
                           {order.status === 'fulfilled' && (
                             <div className="mb-4 space-y-2">
                               <div className={`flex items-center gap-2 text-[10px] font-bold uppercase px-2 py-1 rounded border ${order.payment_status === 'Pending' ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'}`}>
@@ -254,12 +249,6 @@ export default function OrdersPipeline() {
                           </div>
                         </div>
                       ))}
-                      
-                      {columnOrders.length === 0 && (
-                        <div className={`h-24 flex items-center justify-center text-xs border-2 border-dashed rounded-xl ${isDarkMode ? 'border-slate-800 text-slate-600' : 'border-slate-200 text-slate-400'}`}>
-                          Drop orders here
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
@@ -267,63 +256,6 @@ export default function OrdersPipeline() {
             </div>
           )}
         </div>
-
-        {/* DELIVERY CONFIRMATION MODAL */}
-        {deliveryModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-            <div className={`w-full max-w-md p-6 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`}>
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold flex items-center gap-2"><Truck className="text-indigo-500" /> Delivery Confirmation</h3>
-                <button onClick={() => setDeliveryModalOpen(false)} className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}><X size={20} /></button>
-              </div>
-
-              <form onSubmit={submitDeliveryConfirmation} className="space-y-5">
-                
-                {/* Payment Status Dropdown */}
-                <div>
-                  <label className={`block text-xs font-bold uppercase mb-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Payment Status</label>
-                  <select 
-                    value={paymentStatus}
-                    onChange={(e) => setPaymentStatus(e.target.value)}
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border appearance-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
-                  >
-                    <option value="Already Paid (Online)">Already Paid (Online)</option>
-                    <option value="Cash Received">Cash Received (COD)</option>
-                    <option value="Transferred on Delivery">Transferred on Delivery</option>
-                    <option value="Pending">Payment Pending (Failed)</option>
-                  </select>
-                </div>
-
-                {/* Mobile-Optimized Camera/File Upload */}
-                <div>
-                  <label className={`block text-xs font-bold uppercase mb-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Proof of Delivery (Optional)</label>
-                  <label className={`w-full flex flex-col items-center justify-center py-6 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${evidenceFile ? (isDarkMode ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : 'border-emerald-500 bg-emerald-50 text-emerald-600') : (isDarkMode ? 'border-slate-700 hover:border-indigo-500/50 bg-slate-950 hover:bg-slate-900 text-slate-400' : 'border-slate-300 hover:border-indigo-500 bg-slate-50 hover:bg-slate-100 text-slate-500')}`}>
-                    <Camera size={28} className="mb-2" />
-                    <span className="text-sm font-bold">{evidenceFile ? 'Photo Attached!' : 'Tap to open Camera / Upload'}</span>
-                    {/* The capture="environment" tag tells mobile phones to open the rear camera! */}
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      onChange={(e) => e.target.files && setEvidenceFile(e.target.files[0])} 
-                      className="hidden" 
-                    />
-                  </label>
-                </div>
-
-                <div className="pt-2 flex gap-3">
-                  <button type="button" onClick={() => setDeliveryModalOpen(false)} className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold border transition ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'}`}>
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={isSubmittingDelivery} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm px-6 py-3 rounded-lg transition-all shadow-md disabled:opacity-50">
-                    {isSubmittingDelivery ? 'Uploading...' : 'Confirm Delivery'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
       </main>
     </div>
   );
