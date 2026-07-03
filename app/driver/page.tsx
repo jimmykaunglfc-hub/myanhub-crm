@@ -68,24 +68,45 @@ export default function DriverApp() {
   useEffect(() => {
     if (!workspaceId) return;
     const channel = supabase.channel('live-driver-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchDeliveries)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchDeliveries(); // Re-fetch quietly when Admin assigns an order
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId]);
 
-  // ACTION: Claim an order from the pool
+  // ACTION: Claim an order from the pool (INSTANT UI UPDATE)
   const claimOrder = async (orderId: string) => {
     if (!userId) return;
-    await supabase.from('orders').update({ 
+    
+    // 1. Optimistic UI: Update screen instantly
+    setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
+    setActiveTab('my_route');
+
+    // 2. Background Sync
+    const { error } = await supabase.from('orders').update({ 
       assigned_driver_id: userId, 
       delivery_state: 'assigned' 
     }).eq('id', orderId);
-    setActiveTab('my_route');
+
+    if (error) {
+      alert("Failed to claim order. Check connection.");
+      fetchDeliveries(); // Revert screen if failed
+    }
   };
 
-  // ACTION: Advance the delivery progress bar
+  // ACTION: Advance the delivery progress bar (INSTANT UI UPDATE)
   const advanceProgress = async (orderId: string, newState: string) => {
-    await supabase.from('orders').update({ delivery_state: newState }).eq('id', orderId);
+    // 1. Optimistic UI: Move progress bar instantly
+    setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, delivery_state: newState as any } : o));
+
+    // 2. Background Sync
+    const { error } = await supabase.from('orders').update({ delivery_state: newState }).eq('id', orderId);
+    
+    if (error) {
+      alert("Failed to update progress.");
+      fetchDeliveries(); // Revert screen if failed
+    }
   };
 
   // ACTION: Final Delivery Submit
@@ -105,6 +126,10 @@ export default function DriverApp() {
         uploadedUrl = publicUrl;
       }
 
+      // 1. Optimistic UI: Remove from list instantly
+      setDeliveries(prev => prev.filter(o => o.id !== activeDelivery.id));
+
+      // 2. Background Sync
       await supabase.from('orders').update({ 
         status: 'fulfilled',
         delivery_state: 'delivered',
@@ -114,9 +139,9 @@ export default function DriverApp() {
 
       setActiveDelivery(null);
       setEvidenceFile(null);
-      fetchDeliveries();
     } catch (error: any) {
       alert(`Delivery failed: ${error.message}`);
+      fetchDeliveries(); // Sync backup
     } finally {
       setIsSubmitting(false);
     }
@@ -217,7 +242,7 @@ export default function DriverApp() {
         )}
       </main>
 
-      {/* Full Screen Delivery Confirmation Modal (Same as before) */}
+      {/* Full Screen Delivery Confirmation Modal */}
       {activeDelivery && (
         <div className={`fixed inset-0 z-50 flex flex-col animate-slide-up ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
           <div className={`pt-12 pb-4 px-6 flex justify-between items-center border-b ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
