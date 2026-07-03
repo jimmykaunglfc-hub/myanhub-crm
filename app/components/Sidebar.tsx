@@ -6,12 +6,12 @@ import { usePathname } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { 
-  LayoutDashboard, Inbox, Users, ShoppingCart, Settings, LogOut, Package 
+  LayoutDashboard, Inbox, Users, ShoppingCart, Settings, LogOut, Package, Shield 
 } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { isDarkMode } = useTheme(); // NEW: Hooked up the theme engine!
+  const { isDarkMode } = useTheme();
   
   const [unreadCount, setUnreadCount] = useState(0);
   const [userEmail, setUserEmail] = useState('Loading...');
@@ -47,12 +47,14 @@ export default function Sidebar() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  // NEW: Added the "Team" link to the array here!
   const navLinks = [
     { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={18} /> },
     { name: 'Unified Inbox', path: '/inbox', icon: <Inbox size={18} />, badge: unreadCount },
     { name: 'Customers', path: '/customers', icon: <Users size={18} /> },
     { name: 'Orders', path: '/orders', icon: <ShoppingCart size={18} /> },
     { name: 'Inventory', path: '/inventory', icon: <Package size={18} /> },
+    { name: 'Team Access', path: '/team', icon: <Shield size={18} /> }, 
   ];
 
   return (
