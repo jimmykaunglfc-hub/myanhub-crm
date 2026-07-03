@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation'; // NEW: We need the router to redirect users
 import { supabase } from '../lib/supabase';
 import { useTheme } from './context/ThemeContext';
 import Sidebar from './components/Sidebar';
@@ -30,6 +31,7 @@ interface Message {
 
 export default function Dashboard() {
   const { isDarkMode } = useTheme();
+  const router = useRouter(); // NEW: Initialize the router
   
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,14 +58,17 @@ export default function Dashboard() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUserId(user.id);
+      } else {
+        // CRITICAL FIX: If there is no user, kick them to the login screen!
+        router.push('/login');
       }
     };
     fetchSession();
-  }, []);
+  }, [router]);
 
   // 2. Fetch Core Data (Isolated to this Tenant via RLS)
   const fetchDashboardData = async () => {
-    if (!userId) return;
+    if (!userId) return; // Prevent fetching if no user
     
     // Fetch Orders for metrics & list
     const { data: rawOrders } = await supabase
@@ -72,7 +77,6 @@ export default function Dashboard() {
       .order('created_at', { ascending: false });
 
     if (rawOrders) {
-      // Safely cast the raw data to our explicit Order type
       const orders = rawOrders as unknown as Order[];
       setRecentOrders(orders.slice(0, 5));
       
@@ -93,7 +97,6 @@ export default function Dashboard() {
       .order('created_at', { ascending: false });
 
     if (rawMessages) {
-      // Safely cast the raw data to our explicit Message type
       const messages = rawMessages as unknown as Message[];
 
       const unread = messages.filter(m => m.status === 'unread' && m.sender === 'customer').length;
@@ -114,7 +117,9 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchDashboardData();
+    if (userId) {
+      fetchDashboardData();
+    }
   }, [userId]);
 
   // 3. Real-Time Subscription Engine
@@ -129,6 +134,11 @@ export default function Dashboard() {
 
     return () => { supabase.removeChannel(channel); };
   }, [userId]);
+
+  // If no user ID is set yet, show a blank screen to prevent flashing the dashboard UI before redirecting
+  if (!userId) {
+    return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
+  }
 
   return (
     <div className={`flex font-sans min-h-screen transition-colors duration-200 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
@@ -165,7 +175,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Unread Messages Card (Action Required Focus) */}
+              {/* Unread Messages Card */}
               <div className={`p-6 rounded-2xl shadow-md transition-colors ${unreadCount > 0 ? 'bg-indigo-600 text-white border-indigo-500' : (isDarkMode ? 'bg-slate-900 border-slate-800 border shadow-sm' : 'bg-white border-slate-200 border shadow-sm')}`}>
                 <div className="flex justify-between items-center mb-4">
                   <span className={`text-xs font-bold uppercase tracking-wider ${unreadCount > 0 ? 'text-indigo-200' : (isDarkMode ? 'text-slate-400' : 'text-slate-500')}`}>Unread Messages</span>
