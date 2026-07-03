@@ -8,7 +8,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Clock, Package, Truck, CheckCircle2, Trash2, Calendar, 
-  Receipt, Image as ImageIcon, UserCircle
+  Receipt, Image as ImageIcon, UserCircle, Globe, Link as LinkIcon
 } from 'lucide-react';
 
 interface Order {
@@ -20,15 +20,15 @@ interface Order {
   assigned_driver_id: string | null;
   payment_status: string;
   delivery_evidence_url: string | null;
+  is_external_delivery: boolean; // NEW
+  courier_name: string | null;   // NEW
+  tracking_url: string | null;   // NEW
   created_at: string;
   customer_id: string;
   customers: { name: string } | null;
 }
 
-interface Driver {
-  id: string;
-  full_name: string;
-}
+interface Driver { id: string; full_name: string; }
 
 const COLUMNS = [
   { id: 'pending', title: 'PENDING', icon: <Clock size={16} className="text-amber-500" />, bg: 'bg-amber-500', border: 'border-amber-500' },
@@ -46,13 +46,15 @@ export default function OrdersPipeline() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // External Courier Active States
+  const [activeExternalInput, setActiveExternalInput] = useState<string | null>(null);
+  const [courierName, setCourierName] = useState('');
+  const [trackingUrl, setTrackingUrl] = useState('');
+
   useEffect(() => {
     const checkSession = async () => {
       const { data: { session }, error } = await supabase.auth.getSession();
-      if (error || !session) {
-        router.replace('/login');
-        return;
-      }
+      if (error || !session) { router.replace('/login'); return; }
       setUserId(session.user.id);
     };
     checkSession();
@@ -60,20 +62,8 @@ export default function OrdersPipeline() {
 
   const fetchDashboardData = async () => {
     if (!userId) return;
-    
-    // 1. Fetch Orders
-    const { data: orderData } = await supabase
-      .from('orders')
-      .select('*, customers(name)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    // 2. Fetch Drivers in this Workspace
-    const { data: driverData } = await supabase
-      .from('profiles')
-      .select('id, full_name')
-      .eq('workspace_id', userId)
-      .eq('role', 'driver');
+    const { data: orderData } = await supabase.from('orders').select('*, customers(name)').eq('user_id', userId).order('created_at', { ascending: false });
+    const { data: driverData } = await supabase.from('profiles').select('id, full_name').eq('workspace_id', userId).eq('role', 'driver');
 
     if (orderData) setOrders(orderData as Order[]);
     if (driverData) setDrivers(driverData as Driver[]);
@@ -81,12 +71,9 @@ export default function OrdersPipeline() {
   };
 
   useEffect(() => { if (userId) fetchDashboardData(); }, [userId]);
-
   useEffect(() => {
     if (!userId) return;
-    const channel = supabase.channel('live-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchDashboardData)
-      .subscribe();
+    const channel = supabase.channel('live-orders').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchDashboardData).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [userId]);
 
@@ -98,13 +85,11 @@ export default function OrdersPipeline() {
     const orderId = e.dataTransfer.getData('orderId');
     if (!orderId) return;
 
-    // Prevent manually dragging to Delivered (must be done by driver app now)
     if (newStatus === 'fulfilled') {
-      alert("Notice: Orders must be marked as Delivered by the Driver via the mobile app to ensure evidence capture.");
+      alert("Notice: Orders must be marked as Delivered by the internal Driver app, or manually updated if External.");
       return;
     }
 
-    // If dropped into In Transit, ensure it resets to unassigned
     let updates: any = { status: newStatus };
     if (newStatus === 'in_transit') {
       updates.delivery_state = 'unassigned';
@@ -115,11 +100,30 @@ export default function OrdersPipeline() {
     await supabase.from('orders').update(updates).eq('id', orderId);
   };
 
-  const handleAssignDriver = async (orderId: string, driverId: string) => {
+  const handleAssignInternalDriver = async (orderId: string, driverId: string) => {
     await supabase.from('orders').update({ 
       assigned_driver_id: driverId,
+      delivery_state: 'assigned',
+      is_external_delivery: false
+    }).eq('id', orderId);
+  };
+
+  const handleAssignExternalCourier = async (orderId: string) => {
+    if (!courierName) return alert("Please enter a courier name (e.g. DHL).");
+    
+    await supabase.from('orders').update({ 
+      is_external_delivery: true,
+      courier_name: courierName,
+      tracking_url: trackingUrl,
       delivery_state: 'assigned'
     }).eq('id', orderId);
+
+    setActiveExternalInput(null);
+    setCourierName(''); setTrackingUrl('');
+  };
+
+  const markExternalDelivered = async (orderId: string) => {
+    await supabase.from('orders').update({ status: 'fulfilled', delivery_state: 'delivered', payment_status: 'Already Paid (Online)' }).eq('id', orderId);
   };
 
   const handleDeleteOrder = async (orderId: string) => {
@@ -135,117 +139,101 @@ export default function OrdersPipeline() {
       <Sidebar />
       <main className="flex-1 md:ml-64 flex flex-col relative h-screen overflow-hidden">
         <Header />
-        
-        <div className="flex-1 overflow-hidden flex flex-col mt-16 p-6 md:p-8">
+        <div className="flex-1 overflow-hidden flex flex-col mt-16 p-4 md:p-8">
           <div className="mb-6 flex-shrink-0">
             <h2 className="text-2xl font-bold tracking-tight">Dispatch & Order Pipeline</h2>
-            <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              Drag orders to 'In Transit' to open them to your driver pool for fulfillment.
-            </p>
+            <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Manage internal fleet routing and external courier tracking.</p>
           </div>
 
           {loading ? (
-            <div className="flex-1 flex items-center justify-center font-mono text-sm animate-pulse text-indigo-500">LOADING PIPELINE DATA...</div>
+            <div className="flex-1 flex items-center justify-center font-mono text-sm animate-pulse text-indigo-500">LOADING PIPELINE...</div>
           ) : (
             <div className="flex-1 flex gap-6 overflow-x-auto pb-4 custom-scrollbar">
               {COLUMNS.map(column => {
                 const columnOrders = orders.filter(o => o.status === column.id);
                 return (
-                  <div 
-                    key={column.id}
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, column.id)}
-                    className={`flex flex-col w-80 flex-shrink-0 rounded-2xl border transition-colors ${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-100/50 border-slate-200'}`}
-                  >
+                  <div key={column.id} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, column.id)} className={`flex flex-col w-80 flex-shrink-0 rounded-2xl border transition-colors ${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-100/50 border-slate-200'}`}>
                     <div className={`p-4 flex items-center justify-between border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-                      <div className="flex items-center gap-2">
-                        {column.icon}
-                        <h3 className="text-xs font-black uppercase tracking-wider">{column.title}</h3>
-                      </div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'}`}>
-                        {columnOrders.length}
-                      </span>
+                      <div className="flex items-center gap-2">{column.icon}<h3 className="text-xs font-black uppercase tracking-wider">{column.title}</h3></div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'}`}>{columnOrders.length}</span>
                     </div>
 
                     <div className="flex-1 p-3 overflow-y-auto space-y-3">
                       {columnOrders.map(order => (
-                        <div
-                          key={order.id}
-                          draggable={column.id !== 'fulfilled'} // Can't drag out of fulfilled
-                          onDragStart={(e) => handleDragStart(e, order.id)}
-                          className={`p-4 rounded-xl border shadow-sm ${column.id !== 'fulfilled' ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} transition-all ${isDarkMode ? 'bg-slate-950 border-slate-800 hover:border-slate-700' : 'bg-white border-slate-200 hover:border-slate-300'}`}
-                        >
+                        <div key={order.id} draggable={column.id !== 'fulfilled'} onDragStart={(e) => handleDragStart(e, order.id)} className={`p-4 rounded-xl border shadow-sm ${column.id !== 'fulfilled' ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} transition-all ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
                           <div className="flex justify-between items-start mb-3">
                             <div className="text-sm font-bold font-mono">{order.order_id_string}</div>
-                            <div className={`text-sm font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-900'}`}>
-                              ${Number(order.total_amount).toFixed(2)}
-                            </div>
+                            <div className={`text-sm font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-900'}`}>${Number(order.total_amount).toFixed(2)}</div>
                           </div>
                           
                           <div className="space-y-1.5 mb-4">
                             <div className="flex items-center gap-2 text-xs">
-                              <span className={`w-5 h-5 rounded flex items-center justify-center font-bold uppercase text-[10px] ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>
-                                {order.customers?.name?.charAt(0) || '?'}
-                              </span>
-                              <span className={`font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                                {order.customers?.name || 'Unknown Buyer'}
-                              </span>
-                            </div>
-                            <div className={`flex items-center gap-1.5 text-[10px] font-mono ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                              <Calendar size={12} /> {new Date(order.created_at).toLocaleDateString()}
+                              <span className={`w-5 h-5 rounded flex items-center justify-center font-bold uppercase text-[10px] ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>{order.customers?.name?.charAt(0) || '?'}</span>
+                              <span className={`font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{order.customers?.name || 'Unknown Buyer'}</span>
                             </div>
                           </div>
 
-                          {/* IN TRANSIT DISPATCH CONTROLS */}
+                          {/* IN TRANSIT DISPATCH CONTROLS (Hybrid Fleet) */}
                           {column.id === 'in_transit' && (
-                            <div className={`mb-4 p-2.5 rounded-lg border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                              {order.delivery_state === 'unassigned' ? (
-                                <div>
-                                  <label className="text-[10px] font-bold uppercase text-amber-500 mb-1 flex items-center gap-1"><UserCircle size={12}/> Needs Assignment</label>
-                                  <select 
-                                    value={order.assigned_driver_id || ""}
-                                    onChange={(e) => handleAssignDriver(order.id, e.target.value)}
-                                    className={`w-full text-xs p-1.5 rounded border focus:outline-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`}
-                                  >
-                                    <option value="" disabled>-- Assign Driver --</option>
+                            <div className={`mb-4 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                              
+                              {/* State 1: Unassigned (Choose Fleet or External) */}
+                              {order.delivery_state === 'unassigned' && activeExternalInput !== order.id && (
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-bold uppercase text-amber-500 flex items-center gap-1"><UserCircle size={12}/> Internal Fleet</label>
+                                  <select onChange={(e) => handleAssignInternalDriver(order.id, e.target.value)} className={`w-full text-xs p-2 rounded border focus:outline-none mb-2 ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`}>
+                                    <option value="">-- Assign Driver --</option>
                                     {drivers.map(d => <option key={d.id} value={d.id}>{d.full_name}</option>)}
                                   </select>
+                                  
+                                  <div className="relative flex py-1 items-center"><div className="flex-grow border-t border-slate-300 dark:border-slate-700"></div><span className="flex-shrink-0 mx-2 text-[10px] uppercase text-slate-400 font-bold">OR</span><div className="flex-grow border-t border-slate-300 dark:border-slate-700"></div></div>
+                                  
+                                  <button onClick={() => setActiveExternalInput(order.id)} className={`w-full text-xs font-bold p-2 rounded border border-dashed transition-colors flex items-center justify-center gap-1.5 ${isDarkMode ? 'border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10' : 'border-indigo-300 text-indigo-600 hover:bg-indigo-50'}`}>
+                                    <Globe size={14}/> Use External Courier
+                                  </button>
                                 </div>
-                              ) : (
-                                <div>
-                                  <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-1.5">
-                                    <span className="text-indigo-500 flex items-center gap-1"><UserCircle size={12}/> {drivers.find(d => d.id === order.assigned_driver_id)?.full_name || 'Driver'}</span>
-                                    <span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>{order.delivery_state.replace('_', ' ')}</span>
-                                  </div>
-                                  <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-                                    <div className={`h-full bg-indigo-500 transition-all duration-500 ${order.delivery_state === 'assigned' ? 'w-1/3' : order.delivery_state === 'picked_up' ? 'w-2/3' : 'w-full'}`}></div>
+                              )}
+
+                              {/* State 2: Inputting External Details */}
+                              {activeExternalInput === order.id && (
+                                <div className="space-y-2 animate-fade-in">
+                                  <input type="text" placeholder="Courier (e.g. FedEx)" value={courierName} onChange={e => setCourierName(e.target.value)} className={`w-full text-xs p-2 rounded border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`} />
+                                  <input type="text" placeholder="Tracking # or URL" value={trackingUrl} onChange={e => setTrackingUrl(e.target.value)} className={`w-full text-xs p-2 rounded border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`} />
+                                  <div className="flex gap-2 pt-1">
+                                    <button onClick={() => setActiveExternalInput(null)} className={`flex-1 text-[10px] font-bold p-2 rounded border ${isDarkMode ? 'border-slate-700 text-slate-400' : 'border-slate-300 text-slate-600'}`}>Cancel</button>
+                                    <button onClick={() => handleAssignExternalCourier(order.id)} className="flex-1 text-[10px] font-bold p-2 rounded bg-indigo-600 text-white hover:bg-indigo-700">Save Tracking</button>
                                   </div>
                                 </div>
                               )}
-                            </div>
-                          )}
 
-                          {/* DELIVERED PROOF */}
-                          {order.status === 'fulfilled' && (
-                            <div className="mb-4 space-y-2">
-                              <div className={`flex items-center gap-2 text-[10px] font-bold uppercase px-2 py-1 rounded border ${order.payment_status === 'Pending' ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'}`}>
-                                <Receipt size={12} /> Payment: {order.payment_status}
-                              </div>
-                              {order.delivery_evidence_url && (
-                                <a href={order.delivery_evidence_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-[10px] font-bold uppercase px-2 py-1 rounded border bg-blue-500/10 text-blue-500 border-blue-500/20 hover:bg-blue-500/20 transition-colors">
-                                  <ImageIcon size={12} /> View Delivery Photo
-                                </a>
+                              {/* State 3: Assigned (Internal) */}
+                              {order.delivery_state !== 'unassigned' && !order.is_external_delivery && (
+                                <div>
+                                  <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-1.5"><span className="text-indigo-500 flex items-center gap-1"><UserCircle size={12}/> {drivers.find(d => d.id === order.assigned_driver_id)?.full_name || 'Driver'}</span><span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>{order.delivery_state.replace('_', ' ')}</span></div>
+                                  <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden"><div className={`h-full bg-indigo-500 transition-all ${order.delivery_state === 'assigned' ? 'w-1/3' : order.delivery_state === 'picked_up' ? 'w-2/3' : 'w-full'}`}></div></div>
+                                </div>
+                              )}
+
+                              {/* State 4: Assigned (External Courier) */}
+                              {order.is_external_delivery && (
+                                <div>
+                                  <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-2"><span className="text-emerald-500 flex items-center gap-1"><Globe size={12}/> {order.courier_name}</span></div>
+                                  {order.tracking_url && (
+                                    <a href={order.tracking_url.startsWith('http') ? order.tracking_url : `https://google.com/search?q=${order.tracking_url}`} target="_blank" rel="noreferrer" className={`text-xs font-mono font-medium flex items-center gap-1.5 p-2 rounded border transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-700 text-blue-400 hover:border-blue-500/50' : 'bg-white border-slate-200 text-blue-600 hover:border-blue-300'}`}>
+                                      <LinkIcon size={12}/> {order.tracking_url}
+                                    </a>
+                                  )}
+                                  <button onClick={() => markExternalDelivered(order.id)} className="w-full mt-3 text-[10px] font-bold uppercase p-2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors">
+                                    Mark Delivered
+                                  </button>
+                                </div>
                               )}
                             </div>
                           )}
 
                           <div className={`pt-3 flex items-center justify-between border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
-                            <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${isDarkMode ? `bg-slate-900 ${column.border} text-slate-300` : `bg-slate-50 ${column.border} text-slate-600`}`}>
-                              {column.title}
-                            </span>
-                            <button onClick={() => handleDeleteOrder(order.id)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-500 hover:text-rose-400 hover:bg-slate-800' : 'text-slate-400 hover:text-rose-500 hover:bg-slate-100'}`} title="Delete Order">
-                              <Trash2 size={14} />
-                            </button>
+                            <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${isDarkMode ? `bg-slate-900 ${column.border} text-slate-300` : `bg-slate-50 ${column.border} text-slate-600`}`}>{column.title}</span>
+                            <button onClick={() => handleDeleteOrder(order.id)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-500 hover:text-rose-400' : 'text-slate-400 hover:text-rose-500'}`}><Trash2 size={14} /></button>
                           </div>
                         </div>
                       ))}
