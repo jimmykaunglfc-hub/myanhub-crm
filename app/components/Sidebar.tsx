@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image'; // NEW: Next.js optimized image component
+import Image from 'next/image'; 
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
@@ -86,14 +86,14 @@ export default function Sidebar() {
       <aside className={`fixed top-0 left-0 h-screen w-64 z-[70] transform transition-transform duration-300 ease-in-out flex flex-col border-r ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 ${isDarkMode ? 'bg-[#0B0F19] border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
         
         <div className={`h-16 flex items-center justify-between px-6 border-b flex-shrink-0 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-          {/* NEW: Branding Section with Image & Dark Mode Inversion */}
-          <div className="flex items-center gap-2.5">
+          {/* UPDATED: Increased Logo Size and Spacing */}
+          <div className="flex items-center gap-3">
             <Image 
               src="/logo.png" 
               alt="MyanHub Logo" 
-              width={26} 
-              height={26} 
-              className={`transition-all ${isDarkMode ? 'invert opacity-90' : 'opacity-90'}`}
+              width={40} 
+              height={40} 
+              className={`transition-all ${isDarkMode ? 'invert' : ''}`}
             />
             <h1 className="text-xl font-black text-indigo-600 dark:text-indigo-500 tracking-tight">MyanHub</h1>
           </div>
