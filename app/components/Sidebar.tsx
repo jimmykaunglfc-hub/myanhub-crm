@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image'; // NEW: Next.js optimized image component
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
@@ -17,7 +18,7 @@ export default function Sidebar() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [userEmail, setUserEmail] = useState('Loading...');
   const [userInitial, setUserInitial] = useState('?');
-  const [isMobileOpen, setIsMobileOpen] = useState(false); // NEW: Mobile menu state
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -28,7 +29,25 @@ export default function Sidebar() {
       }
     };
     fetchUser();
-    // (Unread count fetcher remains the same...)
+
+    const fetchUnreadCount = async () => {
+      const { count } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'unread')
+        .eq('sender', 'customer');
+        
+      setUnreadCount(count || 0);
+    };
+    fetchUnreadCount();
+
+    const channel = supabase.channel('sidebar-notifications')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
+        fetchUnreadCount();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const handleLogout = async () => {
@@ -67,7 +86,18 @@ export default function Sidebar() {
       <aside className={`fixed top-0 left-0 h-screen w-64 z-[70] transform transition-transform duration-300 ease-in-out flex flex-col border-r ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 ${isDarkMode ? 'bg-[#0B0F19] border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
         
         <div className={`h-16 flex items-center justify-between px-6 border-b flex-shrink-0 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-          <h1 className="text-xl font-black text-indigo-600 dark:text-indigo-500 tracking-tight">MyanHub</h1>
+          {/* NEW: Branding Section with Image & Dark Mode Inversion */}
+          <div className="flex items-center gap-2.5">
+            <Image 
+              src="/logo.png" 
+              alt="MyanHub Logo" 
+              width={26} 
+              height={26} 
+              className={`transition-all ${isDarkMode ? 'invert opacity-90' : 'opacity-90'}`}
+            />
+            <h1 className="text-xl font-black text-indigo-600 dark:text-indigo-500 tracking-tight">MyanHub</h1>
+          </div>
+          
           <button className="md:hidden p-1 opacity-50 hover:opacity-100" onClick={() => setIsMobileOpen(false)}>
             <X size={20} />
           </button>
@@ -80,7 +110,7 @@ export default function Sidebar() {
               <Link 
                 key={link.name} 
                 href={link.path} 
-                onClick={() => setIsMobileOpen(false)} // Close menu on mobile tap
+                onClick={() => setIsMobileOpen(false)}
                 className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors font-medium text-sm ${isActive ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' : (isDarkMode ? 'hover:bg-slate-800/50 hover:text-slate-100' : 'hover:bg-slate-200/50 hover:text-slate-900')}`}
               >
                 <div className="flex items-center gap-3">
