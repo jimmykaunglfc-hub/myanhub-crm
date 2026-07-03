@@ -18,25 +18,41 @@ export default function LoginPage() {
     setError('');
     setMessage('');
     
-    // SIGNUP LOGIC (Just shows a message, doesn't create account)
+    // SIGNUP LOGIC
     if (!isLogin) {
       setMessage("MyanHub is currently invite-only. Please contact support@myanhub.com to request an account.");
       return;
     }
 
-    // LOGIN LOGIC (Checks Supabase)
+    // LOGIN LOGIC
     setIsLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
+      if (error) throw error;
+
+      if (data.user) {
+        // NEW: Check role immediately upon login
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', data.user.id)
+          .single();
+
+        // Push to the correct portal based on their assigned role
+        if (profile?.role === 'driver') {
+          router.push('/driver');
+        } else {
+          router.push('/');
+        }
+      }
+    } catch (err: any) {
       setError("Invalid email or password.");
       setIsLoading(false);
-    } else {
-      // Success! Send them to the dashboard
-      router.push('/');
     }
   };
 

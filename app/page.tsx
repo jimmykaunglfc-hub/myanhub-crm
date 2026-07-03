@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation'; // NEW: We need the router to redirect users
+import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import { useTheme } from './context/ThemeContext';
 import Sidebar from './components/Sidebar';
@@ -31,7 +31,7 @@ interface Message {
 
 export default function Dashboard() {
   const { isDarkMode } = useTheme();
-  const router = useRouter(); // NEW: Initialize the router
+  const router = useRouter(); 
   
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,23 +47,40 @@ export default function Dashboard() {
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
 
-  // 1. Establish Time of Day & Auth Session
+  // 1. STRICT AUTHENTICATION & ROLE GUARD
   useEffect(() => {
     const hour = new Date().getHours();
     if (hour < 12) setGreeting('Good morning');
     else if (hour < 18) setGreeting('Good afternoon');
     else setGreeting('Good evening');
 
-    const fetchSession = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUserId(user.id);
-      } else {
+    const checkSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error || !session) {
         // CRITICAL FIX: If there is no user, kick them to the login screen!
-        router.push('/login');
+        router.replace('/login');
+        return;
       }
+      
+      // NEW: Check the user's role!
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single();
+
+      // If they are a driver, kick them to the mobile Driver App immediately
+      if (profile?.role === 'driver') {
+        router.replace('/driver');
+        return;
+      }
+      
+      // If they are Admin/Staff, let them in
+      setUserId(session.user.id);
     };
-    fetchSession();
+    
+    checkSession();
   }, [router]);
 
   // 2. Fetch Core Data (Isolated to this Tenant via RLS)
