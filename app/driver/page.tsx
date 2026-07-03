@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { 
-  Truck, MapPin, Phone, Camera, CheckCircle2, ChevronRight, X, Receipt 
+  Truck, MapPin, Camera, CheckCircle2, ChevronRight, X, Receipt, LogOut
 } from 'lucide-react';
 
 interface Order {
@@ -23,6 +23,7 @@ export default function DriverApp() {
   const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null); // NEW: Track the boss's ID
   const [deliveries, setDeliveries] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,6 +33,7 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 1. Check Session & Get Workspace ID
   useEffect(() => {
     const checkSession = async () => {
       const { data: { session }, error } = await supabase.auth.getSession();
@@ -39,18 +41,31 @@ export default function DriverApp() {
         router.replace('/login');
         return;
       }
+      
       setUserId(session.user.id);
+
+      // Fetch the driver's profile to find out who their boss is
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('workspace_id, role')
+        .eq('id', session.user.id)
+        .single();
+
+      if (profile) {
+        setWorkspaceId(profile.workspace_id);
+      }
     };
     checkSession();
   }, [router]);
 
+  // 2. Fetch Deliveries belonging to the Workspace
   const fetchDeliveries = async () => {
-    if (!userId) return;
-    // Fetch ONLY orders that are 'in_transit' for the driver to handle
+    if (!workspaceId) return; // CRITICAL: Wait until we know the workspace ID
+    
     const { data, error } = await supabase
       .from('orders')
       .select('*, customers(name)')
-      .eq('user_id', userId)
+      .eq('user_id', workspaceId) // FIX: Look for the owner's orders, not the driver's!
       .eq('status', 'in_transit')
       .order('created_at', { ascending: true });
 
@@ -58,7 +73,18 @@ export default function DriverApp() {
     setLoading(false);
   };
 
-  useEffect(() => { if (userId) fetchDeliveries(); }, [userId]);
+  useEffect(() => { 
+    if (workspaceId) fetchDeliveries(); 
+  }, [workspaceId]); // Trigger fetch when workspace ID is loaded
+
+  // 3. Listen for live updates
+  useEffect(() => {
+    if (!workspaceId) return;
+    const channel = supabase.channel('live-driver-orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchDeliveries)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [workspaceId]);
 
   const submitDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,9 +143,12 @@ export default function DriverApp() {
             <h1 className="text-xl font-black tracking-tight">Driver Portal</h1>
             <p className="text-xs opacity-80 mt-0.5">{deliveries.length} active routes today</p>
           </div>
-          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md">
-            <Truck size={20} />
-          </div>
+          <button 
+            onClick={() => supabase.auth.signOut().then(() => router.push('/login'))}
+            className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md active:scale-95 transition-transform"
+          >
+            <LogOut size={18} />
+          </button>
         </div>
       </header>
 
@@ -174,8 +203,8 @@ export default function DriverApp() {
       {activeDelivery && (
         <div className={`fixed inset-0 z-50 flex flex-col animate-slide-up ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
           <div className={`pt-12 pb-4 px-6 flex justify-between items-center border-b ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <h2 className="text-lg font-bold">Complete Order</h2>
-            <button onClick={() => setActiveDelivery(null)} className="p-2 bg-slate-200 dark:bg-slate-800 rounded-full"><X size={20} /></button>
+            <h2 className="text-lg font-bold flex items-center gap-2"><Truck className="text-indigo-500" /> Complete Order</h2>
+            <button onClick={() => setActiveDelivery(null)} className={`p-2 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}><X size={20} /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6">
@@ -206,10 +235,9 @@ export default function DriverApp() {
               {/* Camera Upload */}
               <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                 <label className="flex items-center gap-2 text-sm font-bold mb-3 uppercase tracking-wider text-slate-500"><Camera size={16} /> Photo Evidence</label>
-                <label className={`w-full flex flex-col items-center justify-center py-10 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${evidenceFile ? 'border-emerald-500 bg-emerald-500/10 text-emerald-500' : (isDarkMode ? 'border-slate-700 bg-slate-950 text-slate-400' : 'border-slate-300 bg-slate-50 text-slate-500')}`}>
+                <label className={`w-full flex flex-col items-center justify-center py-10 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${evidenceFile ? (isDarkMode ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : 'border-emerald-500 bg-emerald-50 text-emerald-600') : (isDarkMode ? 'border-slate-700 bg-slate-950 text-slate-400' : 'border-slate-300 bg-slate-50 text-slate-500')}`}>
                   <Camera size={36} className="mb-3" />
                   <span className="text-base font-bold">{evidenceFile ? 'Photo Captured!' : 'Tap to Open Camera'}</span>
-                  {/* MAGIC: capture="environment" opens the rear camera directly on phones! */}
                   <input type="file" accept="image/*" capture="environment" onChange={(e) => e.target.files && setEvidenceFile(e.target.files[0])} className="hidden" />
                 </label>
               </div>
