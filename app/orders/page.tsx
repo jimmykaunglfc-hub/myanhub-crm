@@ -8,7 +8,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Clock, Package, Truck, CheckCircle2, Trash2, Calendar, 
-  Receipt, Image as ImageIcon, UserCircle, Globe, Link as LinkIcon
+  Receipt, Image as ImageIcon, UserCircle, Globe, Link as LinkIcon, X
 } from 'lucide-react';
 
 interface Order {
@@ -18,11 +18,11 @@ interface Order {
   status: 'pending' | 'processing' | 'in_transit' | 'fulfilled';
   delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
   assigned_driver_id: string | null;
-  payment_status: string;
+  payment_status: string | null;
   delivery_evidence_url: string | null;
-  is_external_delivery: boolean; // NEW
-  courier_name: string | null;   // NEW
-  tracking_url: string | null;   // NEW
+  is_external_delivery: boolean;
+  courier_name: string | null;
+  tracking_url: string | null;
   created_at: string;
   customer_id: string;
   customers: { name: string } | null;
@@ -50,6 +50,9 @@ export default function OrdersPipeline() {
   const [activeExternalInput, setActiveExternalInput] = useState<string | null>(null);
   const [courierName, setCourierName] = useState('');
   const [trackingUrl, setTrackingUrl] = useState('');
+
+  // NEW: Photo Preview Modal State
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -173,11 +176,10 @@ export default function OrdersPipeline() {
                             </div>
                           </div>
 
-                          {/* IN TRANSIT DISPATCH CONTROLS (Hybrid Fleet) */}
+                          {/* IN TRANSIT DISPATCH CONTROLS */}
                           {column.id === 'in_transit' && (
                             <div className={`mb-4 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
                               
-                              {/* State 1: Unassigned (Choose Fleet or External) */}
                               {order.delivery_state === 'unassigned' && activeExternalInput !== order.id && (
                                 <div className="space-y-2">
                                   <label className="text-[10px] font-bold uppercase text-amber-500 flex items-center gap-1"><UserCircle size={12}/> Internal Fleet</label>
@@ -194,7 +196,6 @@ export default function OrdersPipeline() {
                                 </div>
                               )}
 
-                              {/* State 2: Inputting External Details */}
                               {activeExternalInput === order.id && (
                                 <div className="space-y-2 animate-fade-in">
                                   <input type="text" placeholder="Courier (e.g. FedEx)" value={courierName} onChange={e => setCourierName(e.target.value)} className={`w-full text-xs p-2 rounded border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`} />
@@ -206,7 +207,6 @@ export default function OrdersPipeline() {
                                 </div>
                               )}
 
-                              {/* State 3: Assigned (Internal) */}
                               {order.delivery_state !== 'unassigned' && !order.is_external_delivery && (
                                 <div>
                                   <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-1.5"><span className="text-indigo-500 flex items-center gap-1"><UserCircle size={12}/> {drivers.find(d => d.id === order.assigned_driver_id)?.full_name || 'Driver'}</span><span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>{order.delivery_state.replace('_', ' ')}</span></div>
@@ -214,7 +214,6 @@ export default function OrdersPipeline() {
                                 </div>
                               )}
 
-                              {/* State 4: Assigned (External Courier) */}
                               {order.is_external_delivery && (
                                 <div>
                                   <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-2"><span className="text-emerald-500 flex items-center gap-1"><Globe size={12}/> {order.courier_name}</span></div>
@@ -231,9 +230,30 @@ export default function OrdersPipeline() {
                             </div>
                           )}
 
+                          {/* DELIVERED PROOF (Now with Popup Modal Button) */}
+                          {order.status === 'fulfilled' && (
+                            <div className="mb-4 space-y-2">
+                              {order.payment_status && (
+                                <div className={`flex items-center gap-2 text-[10px] font-bold uppercase px-2 py-1 rounded border ${order.payment_status === 'Pending' ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'}`}>
+                                  <Receipt size={12} /> Payment: {order.payment_status}
+                                </div>
+                              )}
+                              
+                              {/* NEW: Button to trigger the Photo Modal */}
+                              {order.delivery_evidence_url && (
+                                <button 
+                                  onClick={() => setPreviewPhotoUrl(order.delivery_evidence_url)}
+                                  className="w-full flex items-center justify-center gap-2 text-[10px] font-bold uppercase px-2 py-2 rounded border bg-blue-500/10 text-blue-500 border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+                                >
+                                  <ImageIcon size={12} /> View Delivery Photo
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           <div className={`pt-3 flex items-center justify-between border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
                             <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${isDarkMode ? `bg-slate-900 ${column.border} text-slate-300` : `bg-slate-50 ${column.border} text-slate-600`}`}>{column.title}</span>
-                            <button onClick={() => handleDeleteOrder(order.id)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-500 hover:text-rose-400' : 'text-slate-400 hover:text-rose-500'}`}><Trash2 size={14} /></button>
+                            <button onClick={() => handleDeleteOrder(order.id)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-500 hover:text-rose-400 hover:bg-slate-800' : 'text-slate-400 hover:text-rose-500'}`}><Trash2 size={14} /></button>
                           </div>
                         </div>
                       ))}
@@ -244,6 +264,33 @@ export default function OrdersPipeline() {
             </div>
           )}
         </div>
+
+        {/* PHOTO VIEWER OVERLAY MODAL */}
+        {previewPhotoUrl && (
+          <div 
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
+            onClick={() => setPreviewPhotoUrl(null)} // Close when clicking the background
+          >
+            <div 
+              className="relative max-w-3xl w-full flex flex-col items-center" 
+              onClick={(e) => e.stopPropagation()} // Prevent clicking the image from closing it
+            >
+              <button 
+                onClick={() => setPreviewPhotoUrl(null)} 
+                className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 transition-colors"
+              >
+                <X size={28} />
+              </button>
+              
+              <img 
+                src={previewPhotoUrl} 
+                alt="Proof of Delivery" 
+                className="w-full h-auto max-h-[85vh] object-contain rounded-xl shadow-2xl" 
+              />
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   );
