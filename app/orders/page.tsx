@@ -26,7 +26,7 @@ interface Order {
   tracking_url: string | null;
   contact_phone: string | null;
   delivery_address: string | null;
-  internal_notes: string | null; // NEW
+  internal_notes: string | null;
   created_at: string;
   customer_id: string;
   customers: { name: string } | null;
@@ -58,7 +58,7 @@ export default function OrdersPipeline() {
   // Photo Preview State
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
 
-  // NEW: ORDER MANAGEMENT MODAL STATES
+  // ORDER MANAGEMENT MODAL STATES
   const [manageModalOpen, setManageModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [editPhone, setEditPhone] = useState('');
@@ -93,7 +93,45 @@ export default function OrdersPipeline() {
     return () => { supabase.removeChannel(channel); };
   }, [userId]);
 
+
+  // -------------------------------------------------------------
+  // NEW: AUTOMATED TRACKING NOTIFICATION ENGINE
+  // -------------------------------------------------------------
+  const sendOrderNotification = async (order: Order, newStatus: string) => {
+    let notificationText = '';
+    
+    // Generate intelligent messages based on the stage
+    if (newStatus === 'processing') {
+      notificationText = `📦 Order Update: Great news! Your order ${order.order_id_string} is now being processed and packed by our team.`;
+    } else if (newStatus === 'in_transit') {
+      notificationText = `🚚 Order Update: Your order ${order.order_id_string} is currently in transit and heading your way!`;
+    } else if (newStatus === 'fulfilled') {
+      notificationText = `✅ Order Delivered: Your order ${order.order_id_string} has been successfully delivered. Thank you for shopping with us!`;
+    }
+
+    if (!notificationText || !userId) return;
+
+    // 1. Log the automated action inside the CRM Unified Inbox
+    await supabase.from('messages').insert({
+      customer_id: order.customer_id,
+      sender: 'Workspace Manager',
+      content: `[System Notification] Auto-Ping: ${notificationText}`,
+      status: 'read',
+      user_id: userId
+    });
+
+    // 2. Push the actual message to the external social platform
+    fetch('/api/send-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerId: order.customer_id, text: notificationText, userId })
+    }).catch(err => console.error("Tracking notification failed to send.", err));
+  };
+
+
+  // -------------------------------------------------------------
   // DRAG & DROP LOGIC
+  // -------------------------------------------------------------
   const handleDragStart = (e: React.DragEvent, orderId: string) => { e.dataTransfer.setData('orderId', orderId); };
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
 
@@ -107,14 +145,23 @@ export default function OrdersPipeline() {
       return;
     }
 
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (!targetOrder) return;
+
     let updates: any = { status: newStatus };
     if (newStatus === 'in_transit') {
       updates.delivery_state = 'unassigned';
       updates.assigned_driver_id = null;
     }
 
+    // Optimistic Update
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updates } : o));
     await supabase.from('orders').update(updates).eq('id', orderId);
+
+    // FIRE NOTIFICATION IF STAGE MOVED FORWARD
+    if (targetOrder.status !== newStatus) {
+      sendOrderNotification(targetOrder, newStatus);
+    }
   };
 
   // DISPATCH CONTROLS
@@ -130,16 +177,22 @@ export default function OrdersPipeline() {
 
   const markExternalDelivered = async (orderId: string) => {
     await supabase.from('orders').update({ status: 'fulfilled', delivery_state: 'delivered', payment_status: 'Already Paid (Online)' }).eq('id', orderId);
+    
+    // FIRE DELIVERY NOTIFICATION FOR EXTERNAL COURIERS
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (targetOrder) {
+      sendOrderNotification(targetOrder, 'fulfilled');
+    }
   };
 
   const handleDeleteOrder = async (orderId: string) => {
     if (!confirm("CRITICAL: Are you sure you want to permanently delete this order?")) return;
     await supabase.from('orders').delete().eq('id', orderId);
     setOrders(prev => prev.filter(o => o.id !== orderId));
-    setManageModalOpen(false); // Close modal if open
+    setManageModalOpen(false); 
   };
 
-  // NEW: OPEN MANAGE MODAL
+  // OPEN MANAGE MODAL
   const openManageModal = (order: Order) => {
     setEditingOrder(order);
     setEditPhone(order.contact_phone || '');
@@ -148,33 +201,22 @@ export default function OrdersPipeline() {
     setManageModalOpen(true);
   };
 
-  // NEW: SAVE ORDER DETAILS
+  // SAVE ORDER DETAILS
   const handleSaveOrderDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingOrder) return;
     setEditSaving(true);
 
-    const updates = {
-      contact_phone: editPhone,
-      delivery_address: editAddress,
-      internal_notes: editNotes
-    };
-
-    // Optimistic UI Update
+    const updates = { contact_phone: editPhone, delivery_address: editAddress, internal_notes: editNotes };
     setOrders(prev => prev.map(o => o.id === editingOrder.id ? { ...o, ...updates } : o));
-
     const { error } = await supabase.from('orders').update(updates).eq('id', editingOrder.id);
     
     setEditSaving(false);
-    if (error) {
-      alert(`Save failed: ${error.message}`);
-      fetchDashboardData();
-    } else {
-      setManageModalOpen(false);
-    }
+    if (error) { alert(`Save failed: ${error.message}`); fetchDashboardData(); } 
+    else { setManageModalOpen(false); }
   };
 
-  // NEW: PROFESSIONAL PRINT PACKING SLIP
+  // PRINT PACKING SLIP
   const handlePrintSlip = (order: Order) => {
     const printContent = `
       <html>
@@ -195,16 +237,9 @@ export default function OrdersPipeline() {
         </head>
         <body>
           <div class="header">
-            <div>
-              <h2>Official Packing Slip</h2>
-              <h1>${order.order_id_string}</h1>
-            </div>
-            <div style="text-align: right;">
-              <h2>Date Generated</h2>
-              <p style="margin:0; font-weight:bold;">${new Date().toLocaleDateString()}</p>
-            </div>
+            <div><h2>Official Packing Slip</h2><h1>${order.order_id_string}</h1></div>
+            <div style="text-align: right;"><h2>Date Generated</h2><p style="margin:0; font-weight:bold;">${new Date().toLocaleDateString()}</p></div>
           </div>
-          
           <div class="grid">
             <div class="box">
               <h3>Deliver To</h3>
@@ -212,7 +247,6 @@ export default function OrdersPipeline() {
               <p style="margin: 5px 0;">${order.delivery_address || 'No Address Provided'}</p>
               <p style="margin: 5px 0;">📞 ${order.contact_phone || 'No Phone Provided'}</p>
             </div>
-            
             <div class="box">
               <h3>Order Details</h3>
               <p style="margin: 5px 0;"><strong>Status:</strong> <span style="text-transform: uppercase;">${order.status}</span></p>
@@ -220,31 +254,16 @@ export default function OrdersPipeline() {
               <p style="margin: 5px 0;"><strong>Total Value:</strong> $${order.total_amount.toFixed(2)}</p>
             </div>
           </div>
-
-          ${order.internal_notes ? `
-          <div class="notes-box">
-            <h3 style="margin-top:0; font-size: 12px; color: #888; text-transform: uppercase;">Internal Fulfillment Remarks</h3>
-            <p style="margin:0; font-weight:bold; white-space: pre-wrap;">${order.internal_notes}</p>
-          </div>
-          ` : ''}
-          
-          <div class="footer">
-            Generated securely by MyanHub Logistics System.
-          </div>
+          ${order.internal_notes ? `<div class="notes-box"><h3 style="margin-top:0; font-size: 12px; color: #888; text-transform: uppercase;">Internal Fulfillment Remarks</h3><p style="margin:0; font-weight:bold; white-space: pre-wrap;">${order.internal_notes}</p></div>` : ''}
+          <div class="footer">Generated securely by MyanHub Logistics System.</div>
         </body>
       </html>
     `;
 
     const printWindow = window.open('', '_blank', 'width=800,height=800');
     if (printWindow) {
-      printWindow.document.write(printContent);
-      printWindow.document.close();
-      printWindow.focus();
-      // Slight delay ensures styles load before print dialog
-      setTimeout(() => {
-        printWindow.print();
-        printWindow.close();
-      }, 250);
+      printWindow.document.write(printContent); printWindow.document.close(); printWindow.focus();
+      setTimeout(() => { printWindow.print(); printWindow.close(); }, 250);
     }
   };
 
@@ -278,7 +297,6 @@ export default function OrdersPipeline() {
                       {columnOrders.map(order => (
                         <div key={order.id} draggable={column.id !== 'fulfilled'} onDragStart={(e) => handleDragStart(e, order.id)} className={`relative p-4 rounded-xl border shadow-sm ${column.id !== 'fulfilled' ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} transition-all ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
                           
-                          {/* NEW: Edit/Manage Button on every card */}
                           <button 
                             onClick={() => openManageModal(order)}
                             className={`absolute top-3 right-3 p-1.5 rounded-lg transition-colors ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:text-indigo-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-500 hover:text-indigo-600 hover:bg-slate-200'}`}
@@ -298,7 +316,6 @@ export default function OrdersPipeline() {
                               <span className={`font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{order.customers?.name || 'Unknown Buyer'}</span>
                             </div>
                             
-                            {/* Display Remarks Indicator if they exist */}
                             {order.internal_notes && (
                               <div className={`mt-2 text-[10px] font-bold px-2 py-1 rounded flex items-start gap-1.5 ${isDarkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-700'}`}>
                                 <FileText size={12} className="flex-shrink-0 mt-0.5" />
@@ -307,7 +324,6 @@ export default function OrdersPipeline() {
                             )}
                           </div>
 
-                          {/* IN TRANSIT DISPATCH CONTROLS */}
                           {column.id === 'in_transit' && (
                             <div className={`mb-4 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
                               {order.delivery_state === 'unassigned' && activeExternalInput !== order.id && (
@@ -360,7 +376,6 @@ export default function OrdersPipeline() {
                             </div>
                           )}
 
-                          {/* DELIVERED PROOF */}
                           {order.status === 'fulfilled' && (
                             <div className="mb-4 space-y-2">
                               {order.payment_status && (
@@ -390,7 +405,7 @@ export default function OrdersPipeline() {
           )}
         </div>
 
-        {/* --- MODAL: MANAGE & EDIT ORDER --- */}
+        {/* MODAL: MANAGE & EDIT ORDER */}
         {manageModalOpen && editingOrder && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setManageModalOpen(false)}>
             <div className={`w-full max-w-lg p-6 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
@@ -404,8 +419,6 @@ export default function OrdersPipeline() {
               </div>
 
               <div className="flex-1 overflow-y-auto space-y-5 pr-2 custom-scrollbar">
-                
-                {/* PRO FEATURE: Print Packing Slip */}
                 <div className={`p-4 rounded-xl border flex items-center justify-between ${isDarkMode ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-indigo-50 border-indigo-100'}`}>
                   <div>
                     <h4 className={`text-sm font-bold ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>Print Waybill</h4>
@@ -440,7 +453,6 @@ export default function OrdersPipeline() {
                     <textarea rows={3} value={editNotes} onChange={e => setEditNotes(e.target.value)} className={`w-full p-3 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/50 border resize-none ${isDarkMode ? 'bg-amber-950/10 border-amber-900/50 text-white' : 'bg-amber-50/50 border-amber-200 text-slate-900'}`} placeholder="e.g. Fragile, deliver after 5pm, missing payment..." />
                   </div>
                 </form>
-
               </div>
 
               <div className="pt-6 mt-2 border-t flex justify-between items-center border-slate-200 dark:border-slate-800">
