@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Send, Image, Smile, MessageSquare, Plus, ShoppingBag, 
-  ClipboardList, Package, MapPin, Phone, CheckCircle2, UserCheck, AlertCircle
+  ClipboardList, Package, MapPin, Phone, CheckCircle2 
 } from 'lucide-react';
 
 interface Customer { id: string; name: string; platform: string; chat_status: string; }
@@ -50,10 +50,10 @@ export default function UnifiedInbox() {
     fetchUser();
   }, []);
 
-  const syncCRMState = async () => {
+  // Wrapped in useCallback to ensure robust realtime fetching
+  const syncCRMState = useCallback(async () => {
     if (!userId) return;
     
-    // Using a broad query to ensure we capture all updates based on RLS
     const { data: custData } = await supabase.from('customers').select('*');
     const { data: msgData } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
     const { data: invData } = await supabase.from('inventory').select('id, name, price, stock_quantity').eq('user_id', userId);
@@ -61,20 +61,24 @@ export default function UnifiedInbox() {
     if (custData) setCustomers(custData as Customer[]);
     if (msgData) setMessages(msgData as Message[]);
     if (invData) setInventory(invData as Product[]);
-  };
+  }, [userId]);
 
   useEffect(() => {
-    if (userId) syncCRMState();
+    if (!userId) return;
     
-    const channel = supabase.channel('live-inbox-feed')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, syncCRMState)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, syncCRMState)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, syncCRMState)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, syncCRMState)
+    // Fetch initial state
+    syncCRMState();
+    
+    // Establish Real-time Subscription
+    const channel = supabase.channel('inbox-realtime-feed')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => { syncCRMState(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => { syncCRMState(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => { syncCRMState(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, () => { syncCRMState(); })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
-  }, [userId]);
+  }, [userId, syncCRMState]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -83,9 +87,6 @@ export default function UnifiedInbox() {
     }
   }, [messages, selectedCustomerId]);
 
-  // -------------------------------------------------------------
-  // SEND MESSAGE HANDLER
-  // -------------------------------------------------------------
   const handleSendMessage = async (e?: React.FormEvent, forcedContent?: string) => {
     if (e) e.preventDefault();
     if (!selectedCustomerId || !userId) return;
@@ -128,9 +129,6 @@ export default function UnifiedInbox() {
     }
   };
 
-  // -------------------------------------------------------------
-  // ORDER CREATION & AUTO-RECEIPT LOGIC
-  // -------------------------------------------------------------
   const handleCreateManualOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomerId || !selectedProductId || !userId) return;
@@ -147,7 +145,6 @@ export default function UnifiedInbox() {
     const targetIdString = orderIdInput.trim() || `MH-${Math.floor(1000 + Math.random() * 9000)}`;
     const totalAmount = product.price * orderQuantity;
 
-    // 1. Create the Order (Now including address & phone)
     const { error: orderError } = await supabase.from('orders').insert({
       customer_id: selectedCustomerId, 
       order_id_string: targetIdString, 
@@ -160,31 +157,24 @@ export default function UnifiedInbox() {
 
     if (orderError) { setOrderStatusMessage("Order Error"); return; }
 
-    // 2. Deduct Stock
     await supabase.from('inventory').update({ stock_quantity: product.stock_quantity - orderQuantity }).eq('id', product.id);
 
-    // 3. System Notification for Admin View
     await supabase.from('messages').insert({
       customer_id: selectedCustomerId, sender: 'Workspace Manager',
       content: `[System Notification] Order ${targetIdString} logged.`,
       status: 'read', user_id: userId
     });
 
-    // 4. THE MAGIC: Send a beautifully formatted auto-receipt to the customer's Telegram/Messenger!
     const receiptText = `🎉 Order Confirmed!\n\nOrder ID: ${targetIdString}\nItem: ${orderQuantity}x ${product.name}\nTotal Due: $${totalAmount.toFixed(2)}\nPhone: ${contactPhone || 'N/A'}\nDeliver to: ${deliveryAddress || 'N/A'}\n\nThank you for shopping with us! We will notify you when it ships.`;
     
     await handleSendMessage(undefined, receiptText);
 
-    // 5. Cleanup
     setOrderStatusMessage('Order Submitted & Receipt Sent!');
     setSelectedProductId(''); setOrderQuantity(1); setOrderIdInput(''); setContactPhone(''); setDeliveryAddress('');
     syncCRMState();
     setTimeout(() => setOrderStatusMessage(''), 4000);
   };
 
-  // -------------------------------------------------------------
-  // CHAT STATUS TOGGLE
-  // -------------------------------------------------------------
   const toggleChatStatus = async (currentStatus: string) => {
     if (!selectedCustomerId) return;
     const newStatus = currentStatus === 'completed' ? 'active' : 'completed';
@@ -196,14 +186,13 @@ export default function UnifiedInbox() {
   const filteredMessages = messages.filter(m => m.customer_id === selectedCustomerId);
   const availableInventory = inventory.filter(p => p.stock_quantity > 0);
 
-  // Filter the Sidebar feed
   const feedCustomers = customers.filter(c => {
     const custMsgs = messages.filter(m => m.customer_id === c.id);
     const hasUnread = custMsgs.some(m => m.status === 'unread' && m.sender === 'customer');
     
     if (feedFilter === 'unread') return hasUnread;
     if (feedFilter === 'completed') return c.chat_status === 'completed';
-    return c.chat_status !== 'completed'; // 'active' default
+    return c.chat_status !== 'completed';
   });
 
   return (
@@ -220,11 +209,26 @@ export default function UnifiedInbox() {
             <div className={`p-4 border-b space-y-3 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
               <h2 className="text-sm font-black uppercase tracking-wider text-slate-500 flex items-center gap-2"><MessageSquare size={16} className="text-indigo-600" /> Conversational Feeds</h2>
               
-              {/* FEED FILTERS */}
-              <div className="flex bg-slate-200/50 dark:bg-slate-800/50 p-1 rounded-lg">
-                <button onClick={() => setFeedFilter('active')} className={`flex-1 text-[10px] font-bold py-1.5 rounded-md transition-colors ${feedFilter === 'active' ? (isDarkMode ? 'bg-slate-700 text-white shadow' : 'bg-white text-slate-900 shadow') : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>ACTIVE</button>
-                <button onClick={() => setFeedFilter('unread')} className={`flex-1 text-[10px] font-bold py-1.5 rounded-md transition-colors ${feedFilter === 'unread' ? (isDarkMode ? 'bg-slate-700 text-white shadow' : 'bg-white text-slate-900 shadow') : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>UNREAD</button>
-                <button onClick={() => setFeedFilter('completed')} className={`flex-1 text-[10px] font-bold py-1.5 rounded-md transition-colors ${feedFilter === 'completed' ? (isDarkMode ? 'bg-slate-700 text-white shadow' : 'bg-white text-slate-900 shadow') : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>RESOLVED</button>
+              {/* ALIGNMENT FIX: Using grid grid-cols-3 for perfect equal widths */}
+              <div className="grid grid-cols-3 w-full bg-slate-200/70 dark:bg-slate-800/70 p-1 rounded-lg gap-1">
+                <button 
+                  onClick={() => setFeedFilter('active')} 
+                  className={`w-full text-[10px] font-bold py-1.5 rounded-md transition-all text-center flex items-center justify-center ${feedFilter === 'active' ? (isDarkMode ? 'bg-slate-700 text-white shadow-sm' : 'bg-white text-slate-900 shadow-sm') : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                >
+                  ACTIVE
+                </button>
+                <button 
+                  onClick={() => setFeedFilter('unread')} 
+                  className={`w-full text-[10px] font-bold py-1.5 rounded-md transition-all text-center flex items-center justify-center ${feedFilter === 'unread' ? (isDarkMode ? 'bg-slate-700 text-white shadow-sm' : 'bg-white text-slate-900 shadow-sm') : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                >
+                  UNREAD
+                </button>
+                <button 
+                  onClick={() => setFeedFilter('completed')} 
+                  className={`w-full text-[10px] font-bold py-1.5 rounded-md transition-all text-center flex items-center justify-center ${feedFilter === 'completed' ? (isDarkMode ? 'bg-slate-700 text-white shadow-sm' : 'bg-white text-slate-900 shadow-sm') : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                >
+                  RESOLVED
+                </button>
               </div>
             </div>
             
@@ -271,7 +275,6 @@ export default function UnifiedInbox() {
                     <p className="text-xs text-slate-500 font-medium">Channel: <span className="text-indigo-500 font-bold uppercase">{activeChatCustomer.platform}</span></p>
                   </div>
                   
-                  {/* TOGGLE RESOLVED BUTTON */}
                   <button 
                     onClick={() => toggleChatStatus(activeChatCustomer.chat_status)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${activeChatCustomer.chat_status === 'completed' ? 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20'}`}
@@ -349,7 +352,6 @@ export default function UnifiedInbox() {
                 
                 <form onSubmit={handleCreateManualOrder} className="space-y-4">
                   
-                  {/* Select Product */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Select Product *</label>
                     <div className="relative">
@@ -361,13 +363,11 @@ export default function UnifiedInbox() {
                     </div>
                   </div>
 
-                  {/* Quantity */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Quantity *</label>
                     <input type="number" min="1" required value={orderQuantity} onChange={e => setOrderQuantity(parseInt(e.target.value) || 1)} className={`w-full px-3 py-2.5 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
                   </div>
 
-                  {/* NEW: Contact Phone */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Contact Phone</label>
                     <div className="relative">
@@ -376,7 +376,6 @@ export default function UnifiedInbox() {
                     </div>
                   </div>
 
-                  {/* NEW: Delivery Address */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Delivery Address</label>
                     <div className="relative">
@@ -387,7 +386,6 @@ export default function UnifiedInbox() {
 
                   <hr className={isDarkMode ? 'border-slate-800' : 'border-slate-100'} />
 
-                  {/* Dynamic Total */}
                   {selectedProductId && (
                     <div className={`p-3 rounded-lg border flex justify-between items-center ${isDarkMode ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-indigo-50 border-indigo-100'}`}>
                       <span className={`text-[10px] font-bold uppercase ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Total Due</span>
