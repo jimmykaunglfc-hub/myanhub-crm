@@ -1,142 +1,223 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
+import Papa from 'papaparse';
+import Tesseract from 'tesseract.js';
 import { 
-  Package, Plus, Search, Edit2, Trash2, AlertTriangle, ArrowUpDown, DollarSign, X
+  Package, Plus, FileSpreadsheet, ScanLine, Trash2, 
+  UploadCloud, AlertCircle, CheckCircle2, X, RefreshCw, Box
 } from 'lucide-react';
 
 interface Product {
   id: string;
   name: string;
-  sku: string;
   price: number;
   stock_quantity: number;
   created_at: string;
 }
 
-export default function Inventory() {
+export default function InventoryManagement() {
   const { isDarkMode } = useTheme();
+  const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
   const [inventory, setInventory] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  
-  // Modal States
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  
-  // Form States
+
+  // Modals State
+  const [activeModal, setActiveModal] = useState<'none' | 'manual' | 'csv' | 'ocr'>('none');
+
+  // Manual Add States
   const [formName, setFormName] = useState('');
-  const [formSku, setFormSku] = useState('');
   const [formPrice, setFormPrice] = useState('');
   const [formQty, setFormQty] = useState('');
-  const [formProcessing, setFormProcessing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // CSV Bulk Upload States
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvStatus, setCsvStatus] = useState<{type: 'idle'|'processing'|'success'|'error', msg: string}>({type: 'idle', msg: ''});
+
+  // OCR Scan States
+  const [ocrImage, setOcrImage] = useState<File | null>(null);
+  const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null);
+  const [ocrStatus, setOcrStatus] = useState<{type: 'idle'|'scanning'|'success'|'error', msg: string}>({type: 'idle', msg: ''});
+  const [extractedRawText, setExtractedRawText] = useState('');
+  
+  // OCR Smart Guesses
+  const [ocrGuessName, setOcrGuessName] = useState('');
+  const [ocrGuessPrice, setOcrGuessPrice] = useState('');
+  const [ocrGuessQty, setOcrGuessQty] = useState('');
 
   useEffect(() => {
-    const initialize = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUserId(user.id);
-        fetchInventory(user.id);
-      }
+    const checkSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error || !session) { router.replace('/login'); return; }
+      setUserId(session.user.id);
     };
-    initialize();
-  }, []);
+    checkSession();
+  }, [router]);
 
-  const fetchInventory = async (uid: string) => {
-    setLoading(true);
+  const fetchInventory = async () => {
+    if (!userId) return;
     const { data, error } = await supabase
       .from('inventory')
       .select('*')
-      .eq('user_id', uid)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false });
-    
-    if (error) {
-      console.error("Fetch Error:", error);
-    } else if (data) {
-      setInventory(data as Product[]);
-    }
+
+    if (!error && data) setInventory(data as Product[]);
     setLoading(false);
   };
 
-  const openModal = (product?: Product) => {
-    if (product) {
-      setEditingId(product.id);
-      setFormName(product.name);
-      setFormSku(product.sku || '');
-      setFormPrice(product.price.toString());
-      setFormQty(product.stock_quantity.toString());
-    } else {
-      setEditingId(null);
-      setFormName('');
-      setFormSku('');
-      setFormPrice('');
-      setFormQty('');
-    }
-    setIsModalOpen(true);
-  };
+  useEffect(() => { if (userId) fetchInventory(); }, [userId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // -------------------------------------------------------------
+  // 1. MANUAL ADD LOGIC
+  // -------------------------------------------------------------
+  const handleManualAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId) return;
-    setFormProcessing(true);
-
-    const payload = {
+    setIsSubmitting(true);
+    
+    const { error } = await supabase.from('inventory').insert({
       user_id: userId,
       name: formName,
-      sku: formSku,
-      price: parseFloat(formPrice) || 0,
-      stock_quantity: parseInt(formQty, 10) || 0,
-    };
+      price: parseFloat(formPrice),
+      stock_quantity: parseInt(formQty)
+    });
 
-    try {
-      if (editingId) {
-        // Update existing
-        const { error } = await supabase.from('inventory').update(payload).eq('id', editingId);
-        if (error) throw error;
-      } else {
-        // Create new
-        const { error } = await supabase.from('inventory').insert(payload);
-        if (error) throw error;
-      }
-
-      await fetchInventory(userId);
-      setIsModalOpen(false);
-    } catch (error: any) {
-      alert(`Database Error: ${error.message}`);
-    } finally {
-      setFormProcessing(false);
+    setIsSubmitting(false);
+    if (error) { alert(`Error: ${error.message}`); } 
+    else {
+      setFormName(''); setFormPrice(''); setFormQty('');
+      setActiveModal('none');
+      fetchInventory();
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this product?")) return;
-    
-    try {
-      const { error } = await supabase.from('inventory').delete().eq('id', id);
-      if (error) throw error;
-      setInventory(prev => prev.filter(p => p.id !== id));
-    } catch (error: any) {
-      alert(`Delete Error: ${error.message}`);
+    if(!confirm("Are you sure you want to delete this product?")) return;
+    await supabase.from('inventory').delete().eq('id', id);
+    setInventory(prev => prev.filter(p => p.id !== id));
+  };
+
+  // -------------------------------------------------------------
+  // 2. BULK CSV UPLOAD LOGIC
+  // -------------------------------------------------------------
+  const handleCsvUpload = async () => {
+    if (!csvFile || !userId) return;
+    setCsvStatus({ type: 'processing', msg: 'Parsing CSV data...' });
+
+    Papa.parse(csvFile, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows = results.data as any[];
+        const payload = rows.map(row => ({
+          user_id: userId,
+          name: row.name || row.Name || row.NAME || 'Unknown Item',
+          price: parseFloat(row.price || row.Price || row.PRICE || '0'),
+          stock_quantity: parseInt(row.quantity || row.Quantity || row.qty || row.QTY || '0')
+        }));
+
+        if (payload.length === 0) {
+          setCsvStatus({ type: 'error', msg: 'No valid rows found in CSV.' });
+          return;
+        }
+
+        setCsvStatus({ type: 'processing', msg: `Uploading ${payload.length} items to database...` });
+        
+        const { error } = await supabase.from('inventory').insert(payload);
+        
+        if (error) {
+          setCsvStatus({ type: 'error', msg: error.message });
+        } else {
+          setCsvStatus({ type: 'success', msg: `Successfully imported ${payload.length} items!` });
+          fetchInventory();
+          setTimeout(() => { setActiveModal('none'); setCsvFile(null); setCsvStatus({type: 'idle', msg: ''}); }, 2000);
+        }
+      },
+      error: (error) => { setCsvStatus({ type: 'error', msg: `Parse Error: ${error.message}` }); }
+    });
+  };
+
+  // -------------------------------------------------------------
+  // 3. OCR AI SCANNER LOGIC
+  // -------------------------------------------------------------
+  const handleImageCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setOcrImage(file);
+      setOcrPreviewUrl(URL.createObjectURL(file));
+      setOcrStatus({ type: 'idle', msg: '' });
+      setExtractedRawText(''); setOcrGuessName(''); setOcrGuessPrice(''); setOcrGuessQty('');
     }
   };
 
-  // Derived Metrics
-  const totalProducts = inventory.length;
-  const lowStockCount = inventory.filter(p => p.stock_quantity > 0 && p.stock_quantity <= 5).length;
-  const outOfStockCount = inventory.filter(p => p.stock_quantity === 0).length;
-  const inventoryValue = inventory.reduce((sum, p) => sum + (p.price * p.stock_quantity), 0);
+  const processOcrScan = async () => {
+    if (!ocrImage) return;
+    setOcrStatus({ type: 'scanning', msg: 'Initializing AI Optical Recognition...' });
 
-  // Filtered List
-  const filteredInventory = inventory.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    p.sku?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+    try {
+      const result = await Tesseract.recognize(ocrImage, 'eng', {
+        logger: m => {
+          if(m.status === 'recognizing text') {
+            setOcrStatus({ type: 'scanning', msg: `Analyzing Slip: ${Math.round(m.progress * 100)}%` });
+          }
+        }
+      });
+
+      const text = result.data.text;
+      setExtractedRawText(text);
+
+      // --- SMART REGEX EXTRACTION ENGINE ---
+      // 1. Try to find a price (e.g. $15.99 or 15.99)
+      const priceMatch = text.match(/\$?\s?(\d+\.\d{2})/);
+      if (priceMatch) setOcrGuessPrice(priceMatch[1]);
+
+      // 2. Try to find a quantity (e.g. Qty: 50, or QTY 50)
+      const qtyMatch = text.match(/(?:qty|quantity)\s*:?\s*(\d+)/i);
+      if (qtyMatch) setOcrGuessQty(qtyMatch[1]);
+
+      // 3. Try to grab the first capitalized string as the product name
+      const nameMatch = text.match(/^[A-Z][a-zA-Z0-9\s\-]+(?=\n|$)/m);
+      if (nameMatch && nameMatch[0].length > 3) setOcrGuessName(nameMatch[0].trim());
+
+      setOcrStatus({ type: 'success', msg: 'Scan complete. Review extracted data below.' });
+
+    } catch (error: any) {
+      setOcrStatus({ type: 'error', msg: `Scan failed: ${error.message}` });
+    }
+  };
+
+  const handleSaveOcrItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userId) return;
+    setIsSubmitting(true);
+    
+    const { error } = await supabase.from('inventory').insert({
+      user_id: userId,
+      name: ocrGuessName,
+      price: parseFloat(ocrGuessPrice) || 0,
+      stock_quantity: parseInt(ocrGuessQty) || 0
+    });
+
+    setIsSubmitting(false);
+    if (error) { alert(`Error: ${error.message}`); } 
+    else {
+      setActiveModal('none');
+      setOcrImage(null); setOcrPreviewUrl(null);
+      fetchInventory();
+    }
+  };
+
+
+  if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
   return (
     <div className={`flex font-sans min-h-screen transition-colors duration-200 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
@@ -144,109 +225,63 @@ export default function Inventory() {
       <main className="flex-1 md:ml-64 flex flex-col relative h-screen overflow-hidden">
         <Header />
         
-        <div className="flex-1 overflow-y-auto mt-16 p-6 md:p-8 space-y-8">
+        <div className="flex-1 overflow-y-auto mt-16 p-4 md:p-8">
           
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          {/* HEADER & ACTIONS */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
-              <h2 className="text-2xl font-bold tracking-tight">Stock Management</h2>
+              <h2 className="text-2xl font-bold tracking-tight">Inventory Matrix</h2>
               <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                Track inventory levels, manage pricing, and monitor stock alerts.
+                Manage stock levels, bulk import CSVs, or use AI slip extraction.
               </p>
             </div>
-            <button 
-              onClick={() => openModal()}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-bold shadow-md transition-colors flex items-center gap-2"
-            >
-              <Plus size={16} /> Add Product
-            </button>
-          </div>
-
-          {/* Metric Cards - UPDATED FOR CLEAN LIGHT MODE */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-              <div className="flex justify-between items-center mb-2">
-                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Items</span>
-                <Package size={16} className="text-indigo-500" />
-              </div>
-              <div className="text-2xl font-black">{totalProducts}</div>
-            </div>
-
-            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-              <div className="flex justify-between items-center mb-2">
-                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Stock Value</span>
-                <DollarSign size={16} className="text-emerald-500" />
-              </div>
-              <div className="text-2xl font-black">${inventoryValue.toFixed(2)}</div>
-            </div>
-
-            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-rose-950/20 border-rose-900/30' : 'bg-white border-rose-200'}`}>
-              <div className="flex justify-between items-center mb-2">
-                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-rose-400' : 'text-rose-500'}`}>Out of Stock</span>
-                <AlertTriangle size={16} className="text-rose-500" />
-              </div>
-              <div className={`text-2xl font-black ${isDarkMode ? 'text-rose-500' : 'text-rose-600'}`}>{outOfStockCount}</div>
-            </div>
-
-            <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${isDarkMode ? 'bg-amber-950/20 border-amber-900/30' : 'bg-white border-amber-200'}`}>
-              <div className="flex justify-between items-center mb-2">
-                <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-amber-400' : 'text-amber-500'}`}>Low Stock Alert</span>
-                <ArrowUpDown size={16} className="text-amber-500" />
-              </div>
-              <div className={`text-2xl font-black ${isDarkMode ? 'text-amber-500' : 'text-amber-600'}`}>{lowStockCount}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={() => setActiveModal('ocr')} className="px-4 py-2.5 rounded-lg text-sm font-bold border transition flex items-center gap-2 bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20 dark:hover:bg-indigo-500/20">
+                <ScanLine size={16} /> Scan Slip (OCR)
+              </button>
+              <button onClick={() => setActiveModal('csv')} className={`px-4 py-2.5 rounded-lg text-sm font-bold border transition flex items-center gap-2 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+                <FileSpreadsheet size={16} /> Bulk CSV
+              </button>
+              <button onClick={() => setActiveModal('manual')} className="px-4 py-2.5 rounded-lg text-sm font-bold transition flex items-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 shadow-md">
+                <Plus size={16} /> Add Item
+              </button>
             </div>
           </div>
 
-          {/* Main Data Table */}
-          <div className={`rounded-2xl border shadow-sm overflow-hidden flex flex-col ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <div className={`p-5 border-b flex justify-between items-center gap-4 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-              <div className="relative flex-1 max-w-md">
-                <Search size={16} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                <input 
-                  type="text" 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by product name or SKU..." 
-                  className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-colors border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400'}`}
-                />
-              </div>
-            </div>
-            
+          {/* INVENTORY GRID */}
+          <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className={`text-xs font-bold uppercase tracking-wider border-b ${isDarkMode ? 'bg-slate-950/50 text-slate-400 border-slate-800' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                    <th className="px-6 py-4">Product Name</th>
-                    <th className="px-6 py-4">SKU</th>
-                    <th className="px-6 py-4 text-right">Price</th>
-                    <th className="px-6 py-4 text-center">Stock Qty</th>
-                    <th className="px-6 py-4 text-center">Status</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className={`uppercase text-[10px] font-black tracking-wider ${isDarkMode ? 'bg-slate-950/50 text-slate-500' : 'bg-slate-50 text-slate-500'}`}>
+                  <tr>
+                    <th className="p-4 border-b border-slate-200 dark:border-slate-800">Product Name</th>
+                    <th className="p-4 border-b border-slate-200 dark:border-slate-800">Unit Price</th>
+                    <th className="p-4 border-b border-slate-200 dark:border-slate-800">Stock Qty</th>
+                    <th className="p-4 border-b border-slate-200 dark:border-slate-800 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800/50' : 'divide-slate-100'}`}>
+                <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                   {loading ? (
-                    <tr><td colSpan={6} className="px-6 py-8 text-center text-sm font-mono text-indigo-500 animate-pulse">LOADING INVENTORY...</td></tr>
-                  ) : filteredInventory.length === 0 ? (
-                    <tr><td colSpan={6} className="px-6 py-8 text-center text-sm text-slate-500">No products found matching your criteria.</td></tr>
+                    <tr><td colSpan={4} className="p-8 text-center font-mono text-indigo-500 animate-pulse">SYNCING INVENTORY...</td></tr>
+                  ) : inventory.length === 0 ? (
+                    <tr><td colSpan={4} className="p-8 text-center text-slate-500">No products found. Add items to begin.</td></tr>
                   ) : (
-                    filteredInventory.map((item) => (
-                      <tr key={item.id} className={`transition-colors ${isDarkMode ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
-                        <td className="px-6 py-4 font-bold text-sm">{item.name}</td>
-                        <td className={`px-6 py-4 font-mono text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{item.sku || '---'}</td>
-                        <td className="px-6 py-4 text-right font-medium">${Number(item.price).toFixed(2)}</td>
-                        <td className="px-6 py-4 text-center font-bold">{item.stock_quantity}</td>
-                        <td className="px-6 py-4 text-center">
-                          {item.stock_quantity === 0 ? (
-                            <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${isDarkMode ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>Out of Stock</span>
-                          ) : item.stock_quantity <= 5 ? (
-                            <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${isDarkMode ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>Low Stock</span>
-                          ) : (
-                            <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${isDarkMode ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200'}`}>In Stock</span>
-                          )}
+                    inventory.map(item => (
+                      <tr key={item.id} className={`transition-colors ${isDarkMode ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
+                        <td className="p-4 font-bold flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}><Box size={14}/></div>
+                          {item.name}
                         </td>
-                        <td className="px-6 py-4 text-right space-x-2">
-                          <button onClick={() => openModal(item)} className={`p-1.5 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:text-indigo-400 hover:bg-slate-800' : 'text-slate-500 hover:text-indigo-600 hover:bg-slate-100'}`}><Edit2 size={16} /></button>
-                          <button onClick={() => handleDelete(item.id)} className={`p-1.5 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:text-rose-400 hover:bg-slate-800' : 'text-slate-500 hover:text-rose-600 hover:bg-slate-100'}`}><Trash2 size={16} /></button>
+                        <td className="p-4 font-black text-indigo-500">${item.price.toFixed(2)}</td>
+                        <td className="p-4">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${item.stock_quantity > 10 ? (isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-700') : (isDarkMode ? 'bg-rose-500/10 text-rose-400' : 'bg-rose-50 text-rose-700')}`}>
+                            {item.stock_quantity} IN STOCK
+                          </span>
+                        </td>
+                        <td className="p-4 text-right">
+                          <button onClick={() => handleDelete(item.id)} className={`p-1.5 rounded transition ${isDarkMode ? 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-400' : 'text-slate-400 hover:bg-rose-50 hover:text-rose-600'}`}>
+                            <Trash2 size={16} />
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -257,44 +292,154 @@ export default function Inventory() {
           </div>
         </div>
 
-        {/* Modal Overlay for Add/Edit */}
-        {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-            <div className={`w-full max-w-md p-6 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`}>
+        {/* ======================================================== */}
+        {/* MODAL 1: MANUAL ADD */}
+        {/* ======================================================== */}
+        {activeModal === 'manual' && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
+            <div className={`w-full max-w-md p-6 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold">{editingId ? 'Edit Product' : 'Add New Product'}</h3>
-                <button onClick={() => setIsModalOpen(false)} className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}><X size={20} /></button>
+                <h3 className="text-lg font-bold flex items-center gap-2"><Package className="text-indigo-500"/> Add Product</h3>
+                <button onClick={() => setActiveModal('none')} className="p-1 rounded opacity-50 hover:opacity-100"><X size={20}/></button>
               </div>
-
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleManualAdd} className="space-y-4">
                 <div>
-                  <label className={`block text-xs font-bold uppercase mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Product Name *</label>
-                  <input type="text" required value={formName} onChange={e => setFormName(e.target.value)} className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} placeholder="e.g. Premium Wireless Headphones" />
-                </div>
-                <div>
-                  <label className={`block text-xs font-bold uppercase mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>SKU (Stock Keeping Unit)</label>
-                  <input type="text" value={formSku} onChange={e => setFormSku(e.target.value)} className={`w-full px-4 py-2.5 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} placeholder="e.g. WH-PRO-01" />
+                  <label className="block text-xs font-bold uppercase mb-1 opacity-70">Product Name</label>
+                  <input type="text" required value={formName} onChange={e => setFormName(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="Wireless Headphones" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className={`block text-xs font-bold uppercase mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Retail Price ($)</label>
-                    <input type="number" step="0.01" value={formPrice} onChange={e => setFormPrice(e.target.value)} className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} placeholder="0.00" />
+                    <label className="block text-xs font-bold uppercase mb-1 opacity-70">Price ($)</label>
+                    <input type="number" step="0.01" required value={formPrice} onChange={e => setFormPrice(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="99.99" />
                   </div>
                   <div>
-                    <label className={`block text-xs font-bold uppercase mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Quantity in Stock</label>
-                    <input type="number" required value={formQty} onChange={e => setFormQty(e.target.value)} className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} placeholder="0" />
+                    <label className="block text-xs font-bold uppercase mb-1 opacity-70">Initial Stock</label>
+                    <input type="number" required value={formQty} onChange={e => setFormQty(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="50" />
                   </div>
                 </div>
-                <div className="pt-4 flex gap-3">
-                  <button type="button" onClick={() => setIsModalOpen(false)} className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-bold border transition ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'}`}>Cancel</button>
-                  <button type="submit" disabled={formProcessing} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg transition-all shadow-md disabled:opacity-50">
-                    {formProcessing ? 'Saving...' : (editingId ? 'Save Changes' : 'Add Product')}
-                  </button>
-                </div>
+                <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg mt-4 transition-all">
+                  {isSubmitting ? 'Saving...' : 'Save Product'}
+                </button>
               </form>
             </div>
           </div>
         )}
+
+        {/* ======================================================== */}
+        {/* MODAL 2: BULK CSV UPLOAD */}
+        {/* ======================================================== */}
+        {activeModal === 'csv' && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
+            <div className={`w-full max-w-md p-6 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold flex items-center gap-2"><FileSpreadsheet className="text-indigo-500"/> Bulk Import</h3>
+                <button onClick={() => setActiveModal('none')} className="p-1 rounded opacity-50 hover:opacity-100"><X size={20}/></button>
+              </div>
+
+              <div className="space-y-4">
+                <div className={`p-4 rounded-lg text-xs border ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                  <strong>Required CSV Format:</strong> Ensure your file has a header row with columns specifically named: <code className="text-indigo-500">name, price, quantity</code>
+                </div>
+
+                <label className={`w-full flex flex-col items-center justify-center py-10 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${csvFile ? (isDarkMode ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : 'border-emerald-500 bg-emerald-50 text-emerald-600') : (isDarkMode ? 'border-slate-700 hover:border-indigo-500/50 bg-slate-950 hover:bg-slate-900 text-slate-400' : 'border-slate-300 hover:border-indigo-500 bg-slate-50 hover:bg-slate-100 text-slate-500')}`}>
+                  <UploadCloud size={32} className="mb-2" />
+                  <span className="text-sm font-bold">{csvFile ? csvFile.name : 'Click to select CSV File'}</span>
+                  <input type="file" accept=".csv" onChange={(e) => setCsvFile(e.target.files?.[0] || null)} className="hidden" />
+                </label>
+
+                {csvStatus.msg && (
+                  <div className={`p-3 rounded-lg text-xs font-bold flex items-center gap-2 ${csvStatus.type === 'error' ? 'bg-rose-500/10 text-rose-500' : csvStatus.type === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-indigo-500/10 text-indigo-500'}`}>
+                    {csvStatus.type === 'processing' ? <RefreshCw size={14} className="animate-spin" /> : csvStatus.type === 'error' ? <AlertCircle size={14}/> : <CheckCircle2 size={14}/>}
+                    {csvStatus.msg}
+                  </div>
+                )}
+
+                <button onClick={handleCsvUpload} disabled={!csvFile || csvStatus.type === 'processing'} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-3 rounded-lg mt-2 transition-all disabled:opacity-50">
+                  Execute Bulk Import
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* MODAL 3: OCR SLIP SCANNER */}
+        {/* ======================================================== */}
+        {activeModal === 'ocr' && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
+            <div className={`w-full max-w-2xl p-6 rounded-2xl shadow-xl flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold flex items-center gap-2"><ScanLine className="text-indigo-500"/> AI Slip Scanner</h3>
+                <button onClick={() => setActiveModal('none')} className="p-1 rounded opacity-50 hover:opacity-100"><X size={20}/></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-5 custom-scrollbar pr-2">
+                {!ocrPreviewUrl ? (
+                  <label className={`w-full flex flex-col items-center justify-center py-16 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${isDarkMode ? 'border-slate-700 hover:border-indigo-500/50 bg-slate-950 hover:bg-slate-900 text-slate-400' : 'border-slate-300 hover:border-indigo-500 bg-slate-50 hover:bg-slate-100 text-slate-500'}`}>
+                    <ScanLine size={40} className="mb-3 opacity-50" />
+                    <span className="text-base font-bold">Snap or Upload Packing Slip</span>
+                    <span className="text-xs opacity-60 mt-1">AI will automatically extract product details.</span>
+                    <input type="file" accept="image/*" capture="environment" onChange={handleImageCapture} className="hidden" />
+                  </label>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex gap-4">
+                      <img src={ocrPreviewUrl} alt="Slip" className="w-1/3 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
+                      <div className="flex-1 flex flex-col justify-center">
+                        {ocrStatus.type === 'idle' && (
+                          <button onClick={processOcrScan} className="bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg shadow w-full flex justify-center gap-2"><ScanLine size={18}/> Run OCR Extraction</button>
+                        )}
+                        {ocrStatus.type === 'scanning' && (
+                          <div className="text-center p-4 border rounded-lg bg-indigo-500/10 text-indigo-500 border-indigo-500/20 font-bold text-sm flex flex-col items-center gap-2">
+                            <RefreshCw size={20} className="animate-spin" /> {ocrStatus.msg}
+                          </div>
+                        )}
+                        {ocrStatus.type === 'success' && (
+                          <div className="p-4 border rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-bold text-sm flex items-center gap-2">
+                            <CheckCircle2 size={18}/> {ocrStatus.msg}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Extracted Data Review Form */}
+                    {ocrStatus.type === 'success' && (
+                      <div className="animate-fade-in border-t border-slate-200 dark:border-slate-800 pt-4">
+                        <h4 className="text-xs font-black uppercase text-indigo-500 mb-3">Review AI Guesses</h4>
+                        <form id="ocrForm" onSubmit={handleSaveOcrItem} className="space-y-4">
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase mb-1 opacity-70">Detected Product Name</label>
+                            <input type="text" required value={ocrGuessName} onChange={e => setOcrGuessName(e.target.value)} className={`w-full p-2.5 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase mb-1 opacity-70">Detected Price ($)</label>
+                              <input type="number" step="0.01" required value={ocrGuessPrice} onChange={e => setOcrGuessPrice(e.target.value)} className={`w-full p-2.5 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase mb-1 opacity-70">Detected Qty</label>
+                              <input type="number" required value={ocrGuessQty} onChange={e => setOcrGuessQty(e.target.value)} className={`w-full p-2.5 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
+                            </div>
+                          </div>
+                          
+                          <div className="mt-4">
+                            <label className="block text-[10px] font-bold uppercase mb-1 opacity-70 text-amber-500">Raw Extracted Text (For Reference)</label>
+                            <textarea readOnly value={extractedRawText} rows={3} className={`w-full p-2 rounded-lg text-xs font-mono opacity-70 focus:outline-none border resize-none ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'}`} />
+                          </div>
+
+                          <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-md mt-2 transition-all">
+                            {isSubmitting ? 'Saving...' : 'Confirm & Add to Inventory'}
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   );
