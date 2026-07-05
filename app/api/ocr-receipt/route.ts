@@ -21,9 +21,9 @@ export async function POST(req: Request) {
     const mimeTypeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
     const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
 
-    // FIX: Using the "-latest" tag ensures Google routes it to the active 1.5 Flash model
+    // FIX: Using the official, stable 1.5 Flash model name
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash-latest",
+      model: "gemini-1.5-flash",
       generationConfig: {
         responseMimeType: "application/json", 
       }
