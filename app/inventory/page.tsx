@@ -7,7 +7,6 @@ import { useTheme } from '../context/ThemeContext';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import Papa from 'papaparse';
-import Tesseract from 'tesseract.js';
 import { 
   Package, Plus, FileSpreadsheet, ScanLine, Trash2, 
   UploadCloud, AlertCircle, CheckCircle2, X, RefreshCw, Box
@@ -42,16 +41,11 @@ export default function InventoryManagement() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvStatus, setCsvStatus] = useState<{type: 'idle'|'processing'|'success'|'error', msg: string}>({type: 'idle', msg: ''});
 
-  // OCR Scan States
+  // OCR Scan States (Upgraded for AI)
   const [ocrImage, setOcrImage] = useState<File | null>(null);
   const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null);
   const [ocrStatus, setOcrStatus] = useState<{type: 'idle'|'scanning'|'success'|'error', msg: string}>({type: 'idle', msg: ''});
-  const [extractedRawText, setExtractedRawText] = useState('');
-  
-  // OCR Smart Guesses
-  const [ocrGuessName, setOcrGuessName] = useState('');
-  const [ocrGuessPrice, setOcrGuessPrice] = useState('');
-  const [ocrGuessQty, setOcrGuessQty] = useState('');
+  const [extractedReceipt, setExtractedReceipt] = useState<any | null>(null);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -147,7 +141,7 @@ export default function InventoryManagement() {
   };
 
   // -------------------------------------------------------------
-  // 3. OCR AI SCANNER LOGIC
+  // 3. AI DOCUMENT OCR SCANNER
   // -------------------------------------------------------------
   const handleImageCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -155,63 +149,63 @@ export default function InventoryManagement() {
       setOcrImage(file);
       setOcrPreviewUrl(URL.createObjectURL(file));
       setOcrStatus({ type: 'idle', msg: '' });
-      setExtractedRawText(''); setOcrGuessName(''); setOcrGuessPrice(''); setOcrGuessQty('');
+      setExtractedReceipt(null);
     }
+  };
+
+  const toBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
   };
 
   const processOcrScan = async () => {
     if (!ocrImage) return;
-    setOcrStatus({ type: 'scanning', msg: 'Initializing AI Optical Recognition...' });
+    setOcrStatus({ type: 'scanning', msg: 'Uploading to Vision AI...' });
 
     try {
-      const result = await Tesseract.recognize(ocrImage, 'eng', {
-        logger: m => {
-          if(m.status === 'recognizing text') {
-            setOcrStatus({ type: 'scanning', msg: `Analyzing Slip: ${Math.round(m.progress * 100)}%` });
-          }
-        }
+      const base64Image = await toBase64(ocrImage);
+      
+      setOcrStatus({ type: 'scanning', msg: 'AI is analyzing receipt layout & items...' });
+      
+      const response = await fetch('/api/ocr-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64Image })
       });
 
-      const text = result.data.text;
-      setExtractedRawText(text);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
 
-      // --- SMART REGEX EXTRACTION ENGINE ---
-      // 1. Try to find a price (e.g. $15.99 or 15.99)
-      const priceMatch = text.match(/\$?\s?(\d+\.\d{2})/);
-      if (priceMatch) setOcrGuessPrice(priceMatch[1]);
-
-      // 2. Try to find a quantity (e.g. Qty: 50, or QTY 50)
-      const qtyMatch = text.match(/(?:qty|quantity)\s*:?\s*(\d+)/i);
-      if (qtyMatch) setOcrGuessQty(qtyMatch[1]);
-
-      // 3. Try to grab the first capitalized string as the product name
-      const nameMatch = text.match(/^[A-Z][a-zA-Z0-9\s\-]+(?=\n|$)/m);
-      if (nameMatch && nameMatch[0].length > 3) setOcrGuessName(nameMatch[0].trim());
-
-      setOcrStatus({ type: 'success', msg: 'Scan complete. Review extracted data below.' });
+      setExtractedReceipt(result.data);
+      setOcrStatus({ type: 'success', msg: `Successfully extracted ${result.data.items?.length || 0} items!` });
 
     } catch (error: any) {
-      setOcrStatus({ type: 'error', msg: `Scan failed: ${error.message}` });
+      setOcrStatus({ type: 'error', msg: `AI Processing failed: ${error.message}` });
     }
   };
 
-  const handleSaveOcrItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userId) return;
+  const handleSaveBulkOcrItems = async () => {
+    if (!userId || !extractedReceipt || !extractedReceipt.items) return;
     setIsSubmitting(true);
     
-    const { error } = await supabase.from('inventory').insert({
+    const payload = extractedReceipt.items.map((item: any) => ({
       user_id: userId,
-      name: ocrGuessName,
-      price: parseFloat(ocrGuessPrice) || 0,
-      stock_quantity: parseInt(ocrGuessQty) || 0
-    });
+      name: item.name || 'Unknown Receipt Item',
+      price: item.unitPrice || 0,
+      stock_quantity: item.quantity || 1
+    }));
+
+    const { error } = await supabase.from('inventory').insert(payload);
 
     setIsSubmitting(false);
-    if (error) { alert(`Error: ${error.message}`); } 
+    if (error) { alert(`Database Error: ${error.message}`); } 
     else {
       setActiveModal('none');
-      setOcrImage(null); setOcrPreviewUrl(null);
+      setOcrImage(null); setOcrPreviewUrl(null); setExtractedReceipt(null);
       fetchInventory();
     }
   };
@@ -363,13 +357,13 @@ export default function InventoryManagement() {
         )}
 
         {/* ======================================================== */}
-        {/* MODAL 3: OCR SLIP SCANNER */}
+        {/* MODAL 3: AI DOCUMENT OCR SCANNER */}
         {/* ======================================================== */}
         {activeModal === 'ocr' && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
-            <div className={`w-full max-w-2xl p-6 rounded-2xl shadow-xl flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <div className={`w-full max-w-3xl p-6 rounded-2xl shadow-xl flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-bold flex items-center gap-2"><ScanLine className="text-indigo-500"/> AI Slip Scanner</h3>
+                <h3 className="text-lg font-bold flex items-center gap-2"><ScanLine className="text-indigo-500"/> AI Receipt Extraction</h3>
                 <button onClick={() => setActiveModal('none')} className="p-1 rounded opacity-50 hover:opacity-100"><X size={20}/></button>
               </div>
 
@@ -377,17 +371,17 @@ export default function InventoryManagement() {
                 {!ocrPreviewUrl ? (
                   <label className={`w-full flex flex-col items-center justify-center py-16 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${isDarkMode ? 'border-slate-700 hover:border-indigo-500/50 bg-slate-950 hover:bg-slate-900 text-slate-400' : 'border-slate-300 hover:border-indigo-500 bg-slate-50 hover:bg-slate-100 text-slate-500'}`}>
                     <ScanLine size={40} className="mb-3 opacity-50" />
-                    <span className="text-base font-bold">Snap or Upload Packing Slip</span>
-                    <span className="text-xs opacity-60 mt-1">AI will automatically extract product details.</span>
+                    <span className="text-base font-bold">Snap or Upload Supplier Receipt</span>
+                    <span className="text-xs opacity-60 mt-1">Vision AI will auto-extract all line items regardless of language.</span>
                     <input type="file" accept="image/*" capture="environment" onChange={handleImageCapture} className="hidden" />
                   </label>
                 ) : (
                   <div className="space-y-4">
                     <div className="flex gap-4">
-                      <img src={ocrPreviewUrl} alt="Slip" className="w-1/3 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
+                      <img src={ocrPreviewUrl} alt="Slip" className="w-1/3 object-contain max-h-48 rounded-lg border border-slate-200 dark:border-slate-700" />
                       <div className="flex-1 flex flex-col justify-center">
                         {ocrStatus.type === 'idle' && (
-                          <button onClick={processOcrScan} className="bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg shadow w-full flex justify-center gap-2"><ScanLine size={18}/> Run OCR Extraction</button>
+                          <button onClick={processOcrScan} className="bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg shadow w-full flex justify-center gap-2"><ScanLine size={18}/> Run AI Extraction</button>
                         )}
                         {ocrStatus.type === 'scanning' && (
                           <div className="text-center p-4 border rounded-lg bg-indigo-500/10 text-indigo-500 border-indigo-500/20 font-bold text-sm flex flex-col items-center gap-2">
@@ -402,35 +396,45 @@ export default function InventoryManagement() {
                       </div>
                     </div>
 
-                    {/* Extracted Data Review Form */}
-                    {ocrStatus.type === 'success' && (
+                    {/* STRUCTURED DATA REVIEW PANEL */}
+                    {ocrStatus.type === 'success' && extractedReceipt && (
                       <div className="animate-fade-in border-t border-slate-200 dark:border-slate-800 pt-4">
-                        <h4 className="text-xs font-black uppercase text-indigo-500 mb-3">Review AI Guesses</h4>
-                        <form id="ocrForm" onSubmit={handleSaveOcrItem} className="space-y-4">
-                          <div>
-                            <label className="block text-[10px] font-bold uppercase mb-1 opacity-70">Detected Product Name</label>
-                            <input type="text" required value={ocrGuessName} onChange={e => setOcrGuessName(e.target.value)} className={`w-full p-2.5 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-[10px] font-bold uppercase mb-1 opacity-70">Detected Price ($)</label>
-                              <input type="number" step="0.01" required value={ocrGuessPrice} onChange={e => setOcrGuessPrice(e.target.value)} className={`w-full p-2.5 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
-                            </div>
-                            <div>
-                              <label className="block text-[10px] font-bold uppercase mb-1 opacity-70">Detected Qty</label>
-                              <input type="number" required value={ocrGuessQty} onChange={e => setOcrGuessQty(e.target.value)} className={`w-full p-2.5 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
-                            </div>
-                          </div>
-                          
-                          <div className="mt-4">
-                            <label className="block text-[10px] font-bold uppercase mb-1 opacity-70 text-amber-500">Raw Extracted Text (For Reference)</label>
-                            <textarea readOnly value={extractedRawText} rows={3} className={`w-full p-2 rounded-lg text-xs font-mono opacity-70 focus:outline-none border resize-none ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'}`} />
-                          </div>
+                        
+                        {/* Receipt Metadata */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                          <div><span className="block text-[9px] uppercase font-bold text-slate-500">Store</span><span className="text-sm font-semibold">{extractedReceipt.storeName || 'N/A'}</span></div>
+                          <div><span className="block text-[9px] uppercase font-bold text-slate-500">Receipt No</span><span className="text-sm font-semibold">{extractedReceipt.receiptNo || 'N/A'}</span></div>
+                          <div><span className="block text-[9px] uppercase font-bold text-slate-500">Date</span><span className="text-sm font-semibold">{extractedReceipt.date || 'N/A'}</span></div>
+                          <div><span className="block text-[9px] uppercase font-bold text-slate-500">Total</span><span className="text-sm font-black text-indigo-500">{extractedReceipt.currency} {extractedReceipt.total}</span></div>
+                        </div>
 
-                          <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-md mt-2 transition-all">
-                            {isSubmitting ? 'Saving...' : 'Confirm & Add to Inventory'}
-                          </button>
-                        </form>
+                        {/* Line Items Table */}
+                        <h4 className="text-xs font-black uppercase text-indigo-500 mb-3 flex items-center gap-2"><Package size={14}/> Extracted Items ({extractedReceipt.items?.length || 0})</h4>
+                        
+                        <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden mb-6">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-slate-100 dark:bg-slate-950 text-[10px] uppercase text-slate-500 font-bold">
+                              <tr>
+                                <th className="p-3">Item Name</th>
+                                <th className="p-3 w-20">Qty</th>
+                                <th className="p-3 w-24">Unit Price</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                              {extractedReceipt.items?.map((item: any, idx: number) => (
+                                <tr key={idx} className="bg-white dark:bg-slate-900">
+                                  <td className="p-3 font-semibold">{item.name}</td>
+                                  <td className="p-3 font-mono">{item.quantity}</td>
+                                  <td className="p-3 font-mono">${item.unitPrice}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <button onClick={handleSaveBulkOcrItems} disabled={isSubmitting} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-md transition-all">
+                          {isSubmitting ? 'Syncing to Database...' : `Auto-Create ${extractedReceipt.items?.length || 0} Inventory Items`}
+                        </button>
                       </div>
                     )}
                   </div>
