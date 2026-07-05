@@ -21,12 +21,10 @@ export async function POST(req: Request) {
     const mimeTypeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
     const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
 
-    // FIX: Using the official, stable 1.5 Flash model name
+    // FIX 1: Switch to the universally available 'Pro' model
+    // FIX 2: Removed the strict JSON generationConfig to prevent 404 routing errors
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      generationConfig: {
-        responseMimeType: "application/json", 
-      }
+      model: "gemini-1.5-pro",
     });
 
     const prompt = `You are an expert ERP accounting AI. Extract the data from the provided receipt image. 
@@ -43,7 +41,7 @@ export async function POST(req: Request) {
         { "name": "string", "quantity": number, "unitPrice": number }
       ]
     }
-    If a value is not found, use null or 0. Translate foreign languages to English if necessary, but keep original item names if they are specific products.`;
+    If a value is not found, use null or 0. Translate foreign languages to English if necessary, but keep original item names if they are specific products. Do not include markdown formatting, just the raw JSON.`;
 
     const imagePart = {
       inlineData: { data: base64Data, mimeType: mimeType }
@@ -54,7 +52,7 @@ export async function POST(req: Request) {
     
     if (!responseText) throw new Error("Gemini returned an empty response.");
 
-    // SAFETY CATCH: Remove markdown backticks if Gemini accidentally includes them
+    // SAFETY CATCH: Clean up any markdown blocks if Gemini decides to add them anyway
     const cleanedText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const structuredData = JSON.parse(cleanedText);
     
