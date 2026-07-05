@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Prevent Vercel from timing out on larger image uploads
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
@@ -21,10 +20,9 @@ export async function POST(req: Request) {
     const mimeTypeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
     const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
 
-    // FIX 1: Switch to the universally available 'Pro' model
-    // FIX 2: Removed the strict JSON generationConfig to prevent 404 routing errors
+    // Back to Flash - it's the fastest and best for this task!
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-pro",
+      model: "gemini-1.5-flash",
     });
 
     const prompt = `You are an expert ERP accounting AI. Extract the data from the provided receipt image. 
@@ -52,7 +50,6 @@ export async function POST(req: Request) {
     
     if (!responseText) throw new Error("Gemini returned an empty response.");
 
-    // SAFETY CATCH: Clean up any markdown blocks if Gemini decides to add them anyway
     const cleanedText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const structuredData = JSON.parse(cleanedText);
     
