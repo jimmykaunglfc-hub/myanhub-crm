@@ -20,6 +20,9 @@ export async function POST(req: Request) {
     const mimeTypeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
     const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
 
+    // 🚀 THE FIX: We are now using the exact, specialized model your API key is locked to!
+    const model = genAI.getGenerativeModel({ model: "gemini-robotics-er-1.5-preview" });
+
     const prompt = `You are an expert ERP accounting AI. Extract the data from the provided receipt image. 
     Return ONLY a JSON object with this exact structure:
     {
@@ -41,8 +44,6 @@ export async function POST(req: Request) {
     };
 
     try {
-      // We will attempt the standard flash model first
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
       const result = await model.generateContent([prompt, imagePart]);
       const responseText = result.response.text();
       
@@ -54,20 +55,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, data: structuredData });
 
     } catch (apiError: any) {
-      // 🚀 THE DIAGNOSTIC TOOL: If it 404s, we ask Google what models you actually have access to
+      // Diagnostic tool fallback just in case
       if (apiError.message && apiError.message.includes('404')) {
         const checkResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
         const checkData = await checkResponse.json();
         
-        // Filter out non-generating models to find the exact names your key allows
         const availableModels = checkData.models
           ?.map((m: any) => m.name.replace('models/', ''))
           .filter((m: string) => m.includes('gemini') && m.includes('1.5')) || [];
 
-        throw new Error(`Google API Key mismatch. Your specific key only has access to these models: [ ${availableModels.join(', ')} ]. Please copy one of these exact names into your route.ts file.`);
+        throw new Error(`Google API Key mismatch. Your specific key only has access to these models: [ ${availableModels.join(', ')} ].`);
       }
-      
-      // If it's not a 404, throw the standard error
       throw apiError;
     }
 
