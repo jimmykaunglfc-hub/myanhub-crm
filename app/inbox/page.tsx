@@ -1,5 +1,6 @@
 "use client";
 
+import { formatNumber, formatCurrency } from '../../lib/formatters';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
@@ -133,7 +134,7 @@ export default function UnifiedInbox() {
     const totalRequestedQty = (existingCartItem?.quantity || 0) + qty;
 
     if (totalRequestedQty > product.stock_quantity) {
-      setOrderStatusMessage(`Not enough stock! Only ${product.stock_quantity} available total.`);
+      setOrderStatusMessage(`Not enough stock! Only ${formatNumber(product.stock_quantity)} available total.`);
       return;
     }
 
@@ -190,8 +191,8 @@ export default function UnifiedInbox() {
     });
 
     // 4. Generate Customer Auto-Receipt
-    let receiptItems = cart.map(item => `▪ ${item.quantity}x ${item.product.name}`).join('\n');
-    const receiptText = `🎉 Order Confirmed!\n\nOrder ID: ${targetIdString}\n\nItems Ordered:\n${receiptItems}\n\nTotal Due: $${totalAmount.toFixed(2)}\nPhone: ${contactPhone || 'N/A'}\nDeliver to: ${deliveryAddress || 'N/A'}\n\nThank you for shopping with us! We will notify you when it ships.`;
+    let receiptItems = cart.map(item => `▪ ${formatNumber(item.quantity)}x ${item.product.name}`).join('\n');
+    const receiptText = `🎉 Order Confirmed!\n\nOrder ID: ${targetIdString}\n\nItems Ordered:\n${receiptItems}\n\nTotal Due: ${formatCurrency(totalAmount, 'USD')}\nPhone: ${contactPhone || 'N/A'}\nDeliver to: ${deliveryAddress || 'N/A'}\n\nThank you for shopping with us! We will notify you when it ships.`;
     
     await handleSendMessage(undefined, receiptText);
 
@@ -353,7 +354,7 @@ export default function UnifiedInbox() {
                       <div className="flex gap-2">
                         <select value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)} className={`flex-1 px-3 py-2.5 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 border appearance-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`}>
                           <option value="" disabled>Choose an item...</option>
-                          {availableInventory.map(p => <option key={p.id} value={p.id}>{p.name} - ${p.price.toFixed(2)}</option>)}
+                          {availableInventory.map(p => <option key={p.id} value={p.id}>{p.name} - {formatCurrency(p.price, 'USD')}</option>)}
                         </select>
                         <input type="text" value={orderQuantityInput} onChange={e => setOrderQuantityInput(e.target.value)} placeholder="Qty" className={`w-16 px-2 py-2.5 rounded-lg text-xs font-semibold text-center focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
                         <button onClick={handleAddToCart} disabled={!selectedProductId} className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-400 p-2.5 rounded-lg transition disabled:opacity-50"><Plus size={16}/></button>
@@ -366,9 +367,9 @@ export default function UnifiedInbox() {
                         <h4 className="text-[10px] font-bold text-slate-500 uppercase border-b pb-2 dark:border-slate-800">Shopping Cart ({cart.length})</h4>
                         {cart.map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs">
-                            <span className="font-semibold truncate">{item.quantity}x {item.product.name}</span>
+                            <span className="font-semibold truncate">{formatNumber(item.quantity)}x {item.product.name}</span>
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-slate-500">${(item.quantity * item.product.price).toFixed(2)}</span>
+                              <span className="font-mono text-slate-500">{formatCurrency(item.quantity * item.product.price, 'USD')}</span>
                               <button onClick={() => removeFromCart(item.product.id)} className="text-rose-400 hover:text-rose-600"><Trash2 size={12}/></button>
                             </div>
                           </div>
@@ -397,7 +398,7 @@ export default function UnifiedInbox() {
 
                       <div className={`p-3 rounded-lg border flex justify-between items-center ${isDarkMode ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-indigo-50 border-indigo-100'}`}>
                         <span className={`text-[10px] font-bold uppercase ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Total Due</span>
-                        <span className={`text-base font-black ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>${cartTotal.toFixed(2)}</span>
+                        <span className={`text-base font-black ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>{formatCurrency(cartTotal, 'USD')}</span>
                       </div>
 
                       <button type="submit" disabled={cart.length === 0} className={`w-full text-white font-bold text-xs py-3 rounded-lg transition shadow flex items-center justify-center gap-1.5 disabled:opacity-50 ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-900 hover:bg-indigo-600'}`}>
@@ -426,7 +427,7 @@ export default function UnifiedInbox() {
                           </div>
                           <div className="flex justify-between items-center">
                             <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${order.status === 'fulfilled' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>{order.status}</span>
-                            <span className="text-sm font-black">${order.total_amount.toFixed(2)}</span>
+                            <span className="text-sm font-black">{formatCurrency(order.total_amount, 'USD')}</span>
                           </div>
                         </div>
                       ))

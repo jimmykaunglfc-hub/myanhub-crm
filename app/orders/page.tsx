@@ -1,5 +1,6 @@
 "use client";
 
+import { formatNumber, formatCurrency } from '../../lib/formatters';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
@@ -95,12 +96,11 @@ export default function OrdersPipeline() {
 
 
   // -------------------------------------------------------------
-  // NEW: AUTOMATED TRACKING NOTIFICATION ENGINE
+  // AUTOMATED TRACKING NOTIFICATION ENGINE (Drag & Drop)
   // -------------------------------------------------------------
   const sendOrderNotification = async (order: Order, newStatus: string) => {
     let notificationText = '';
     
-    // Generate intelligent messages based on the stage
     if (newStatus === 'processing') {
       notificationText = `📦 Order Update: Great news! Your order ${order.order_id_string} is now being processed and packed by our team.`;
     } else if (newStatus === 'in_transit') {
@@ -111,19 +111,13 @@ export default function OrdersPipeline() {
 
     if (!notificationText || !userId) return;
 
-    // 1. Log the automated action inside the CRM Unified Inbox
     await supabase.from('messages').insert({
-      customer_id: order.customer_id,
-      sender: 'Workspace Manager',
-      content: `[System Notification] Auto-Ping: ${notificationText}`,
-      status: 'read',
-      user_id: userId
+      customer_id: order.customer_id, sender: 'Workspace Manager',
+      content: `[System Notification] Auto-Ping: ${notificationText}`, status: 'read', user_id: userId
     });
 
-    // 2. Push the actual message to the external social platform
     fetch('/api/send-message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ customerId: order.customer_id, text: notificationText, userId })
     }).catch(err => console.error("Tracking notification failed to send.", err));
   };
@@ -154,31 +148,64 @@ export default function OrdersPipeline() {
       updates.assigned_driver_id = null;
     }
 
-    // Optimistic Update
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updates } : o));
     await supabase.from('orders').update(updates).eq('id', orderId);
 
-    // FIRE NOTIFICATION IF STAGE MOVED FORWARD
     if (targetOrder.status !== newStatus) {
       sendOrderNotification(targetOrder, newStatus);
     }
   };
 
-  // DISPATCH CONTROLS
+  // -------------------------------------------------------------
+  // DISPATCH CONTROLS (Now with automated notifications!)
+  // -------------------------------------------------------------
   const handleAssignInternalDriver = async (orderId: string, driverId: string) => {
     await supabase.from('orders').update({ assigned_driver_id: driverId, delivery_state: 'assigned', is_external_delivery: false }).eq('id', orderId);
+    
+    // Auto-Ping Customer about Assignment
+    const targetOrder = orders.find(o => o.id === orderId);
+    const assignedDriver = drivers.find(d => d.id === driverId);
+    if (targetOrder && assignedDriver && userId) {
+      const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been assigned to our driver, ${assignedDriver.full_name}, and will be dispatched soon!`;
+      
+      await supabase.from('messages').insert({
+        customer_id: targetOrder.customer_id, sender: 'Workspace Manager',
+        content: `[System Notification] Auto-Ping: ${text}`, status: 'read', user_id: userId
+      });
+
+      fetch('/api/send-message', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: targetOrder.customer_id, text, userId })
+      });
+    }
   };
 
   const handleAssignExternalCourier = async (orderId: string) => {
     if (!courierName) return alert("Please enter a courier name (e.g. DHL).");
     await supabase.from('orders').update({ is_external_delivery: true, courier_name: courierName, tracking_url: trackingUrl, delivery_state: 'assigned' }).eq('id', orderId);
+    
+    // Auto-Ping Customer about External Dispatch
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (targetOrder && userId) {
+      const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been dispatched via ${courierName}.${trackingUrl ? ` Track your package here: ${trackingUrl}` : ''}`;
+      
+      await supabase.from('messages').insert({
+        customer_id: targetOrder.customer_id, sender: 'Workspace Manager',
+        content: `[System Notification] Auto-Ping: ${text}`, status: 'read', user_id: userId
+      });
+
+      fetch('/api/send-message', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: targetOrder.customer_id, text, userId })
+      });
+    }
+    
     setActiveExternalInput(null); setCourierName(''); setTrackingUrl('');
   };
 
   const markExternalDelivered = async (orderId: string) => {
     await supabase.from('orders').update({ status: 'fulfilled', delivery_state: 'delivered', payment_status: 'Already Paid (Online)' }).eq('id', orderId);
     
-    // FIRE DELIVERY NOTIFICATION FOR EXTERNAL COURIERS
     const targetOrder = orders.find(o => o.id === orderId);
     if (targetOrder) {
       sendOrderNotification(targetOrder, 'fulfilled');
@@ -251,7 +278,7 @@ export default function OrdersPipeline() {
               <h3>Order Details</h3>
               <p style="margin: 5px 0;"><strong>Status:</strong> <span style="text-transform: uppercase;">${order.status}</span></p>
               <p style="margin: 5px 0;"><strong>Payment Status:</strong> ${order.payment_status || 'Pending'}</p>
-              <p style="margin: 5px 0;"><strong>Total Value:</strong> $${order.total_amount.toFixed(2)}</p>
+              <p style="margin: 5px 0;"><strong>Total Value:</strong> ${formatCurrency(order.total_amount, 'USD')}</p>
             </div>
           </div>
           ${order.internal_notes ? `<div class="notes-box"><h3 style="margin-top:0; font-size: 12px; color: #888; text-transform: uppercase;">Internal Fulfillment Remarks</h3><p style="margin:0; font-weight:bold; white-space: pre-wrap;">${order.internal_notes}</p></div>` : ''}
@@ -290,7 +317,7 @@ export default function OrdersPipeline() {
                   <div key={column.id} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, column.id)} className={`flex flex-col w-80 flex-shrink-0 rounded-2xl border transition-colors ${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-100/50 border-slate-200'}`}>
                     <div className={`p-4 flex items-center justify-between border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
                       <div className="flex items-center gap-2">{column.icon}<h3 className="text-xs font-black uppercase tracking-wider">{column.title}</h3></div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'}`}>{columnOrders.length}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'}`}>{formatNumber(columnOrders.length)}</span>
                     </div>
 
                     <div className="flex-1 p-3 overflow-y-auto space-y-3">
@@ -310,7 +337,11 @@ export default function OrdersPipeline() {
                           </div>
                           
                           <div className="space-y-1.5 mb-4">
-                            <div className={`text-lg font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>${Number(order.total_amount).toFixed(2)}</div>
+                            {/* APPLIED GLOBAL CURRENCY FORMATTER HERE */}
+                            <div className={`text-lg font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                              {formatCurrency(order.total_amount, 'USD')}
+                            </div>
+                            
                             <div className="flex items-center gap-2 text-xs mt-2">
                               <span className={`w-5 h-5 rounded flex items-center justify-center font-bold uppercase text-[10px] ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>{order.customers?.name?.charAt(0) || '?'}</span>
                               <span className={`font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{order.customers?.name || 'Unknown Buyer'}</span>
