@@ -41,7 +41,7 @@ export default function InventoryManagement() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvStatus, setCsvStatus] = useState<{type: 'idle'|'processing'|'success'|'error', msg: string}>({type: 'idle', msg: ''});
 
-  // OCR Scan States (Upgraded for AI)
+  // OCR Scan States
   const [ocrImage, setOcrImage] = useState<File | null>(null);
   const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null);
   const [ocrStatus, setOcrStatus] = useState<{type: 'idle'|'scanning'|'success'|'error', msg: string}>({type: 'idle', msg: ''});
@@ -58,40 +58,26 @@ export default function InventoryManagement() {
 
   const fetchInventory = async () => {
     if (!userId) return;
-    const { data, error } = await supabase
-      .from('inventory')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
+    const { data, error } = await supabase.from('inventory').select('*').eq('user_id', userId).order('created_at', { ascending: false });
     if (!error && data) setInventory(data as Product[]);
     setLoading(false);
   };
 
   useEffect(() => { if (userId) fetchInventory(); }, [userId]);
 
-  // -------------------------------------------------------------
   // 1. MANUAL ADD LOGIC
-  // -------------------------------------------------------------
   const handleManualAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId) return;
     setIsSubmitting(true);
     
     const { error } = await supabase.from('inventory').insert({
-      user_id: userId,
-      name: formName,
-      price: parseFloat(formPrice),
-      stock_quantity: parseInt(formQty)
+      user_id: userId, name: formName, price: parseFloat(formPrice), stock_quantity: parseInt(formQty)
     });
 
     setIsSubmitting(false);
     if (error) { alert(`Error: ${error.message}`); } 
-    else {
-      setFormName(''); setFormPrice(''); setFormQty('');
-      setActiveModal('none');
-      fetchInventory();
-    }
+    else { setFormName(''); setFormPrice(''); setFormQty(''); setActiveModal('none'); fetchInventory(); }
   };
 
   const handleDelete = async (id: string) => {
@@ -100,16 +86,13 @@ export default function InventoryManagement() {
     setInventory(prev => prev.filter(p => p.id !== id));
   };
 
-  // -------------------------------------------------------------
   // 2. BULK CSV UPLOAD LOGIC
-  // -------------------------------------------------------------
   const handleCsvUpload = async () => {
     if (!csvFile || !userId) return;
     setCsvStatus({ type: 'processing', msg: 'Parsing CSV data...' });
 
     Papa.parse(csvFile, {
-      header: true,
-      skipEmptyLines: true,
+      header: true, skipEmptyLines: true,
       complete: async (results) => {
         const rows = results.data as any[];
         const payload = rows.map(row => ({
@@ -119,18 +102,12 @@ export default function InventoryManagement() {
           stock_quantity: parseInt(row.quantity || row.Quantity || row.qty || row.QTY || '0')
         }));
 
-        if (payload.length === 0) {
-          setCsvStatus({ type: 'error', msg: 'No valid rows found in CSV.' });
-          return;
-        }
-
+        if (payload.length === 0) { setCsvStatus({ type: 'error', msg: 'No valid rows found in CSV.' }); return; }
         setCsvStatus({ type: 'processing', msg: `Uploading ${payload.length} items to database...` });
         
         const { error } = await supabase.from('inventory').insert(payload);
-        
-        if (error) {
-          setCsvStatus({ type: 'error', msg: error.message });
-        } else {
+        if (error) { setCsvStatus({ type: 'error', msg: error.message }); } 
+        else {
           setCsvStatus({ type: 'success', msg: `Successfully imported ${payload.length} items!` });
           fetchInventory();
           setTimeout(() => { setActiveModal('none'); setCsvFile(null); setCsvStatus({type: 'idle', msg: ''}); }, 2000);
@@ -140,9 +117,7 @@ export default function InventoryManagement() {
     });
   };
 
-  // -------------------------------------------------------------
   // 3. AI DOCUMENT OCR SCANNER
-  // -------------------------------------------------------------
   const handleImageCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -168,7 +143,6 @@ export default function InventoryManagement() {
 
     try {
       const base64Image = await toBase64(ocrImage);
-      
       setOcrStatus({ type: 'scanning', msg: 'AI is analyzing receipt layout & items...' });
       
       const response = await fetch('/api/ocr-receipt', {
@@ -178,13 +152,13 @@ export default function InventoryManagement() {
       });
 
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      if (!response.ok) throw new Error(result.error || "Unknown server error");
 
       setExtractedReceipt(result.data);
       setOcrStatus({ type: 'success', msg: `Successfully extracted ${result.data.items?.length || 0} items!` });
 
     } catch (error: any) {
-      setOcrStatus({ type: 'error', msg: `AI Processing failed: ${error.message}` });
+      setOcrStatus({ type: 'error', msg: `AI Error: ${error.message}` });
     }
   };
 
@@ -221,13 +195,10 @@ export default function InventoryManagement() {
         
         <div className="flex-1 overflow-y-auto mt-16 p-4 md:p-8">
           
-          {/* HEADER & ACTIONS */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
               <h2 className="text-2xl font-bold tracking-tight">Inventory Matrix</h2>
-              <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                Manage stock levels, bulk import CSVs, or use AI slip extraction.
-              </p>
+              <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Manage stock levels, bulk import CSVs, or use AI slip extraction.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button onClick={() => setActiveModal('ocr')} className="px-4 py-2.5 rounded-lg text-sm font-bold border transition flex items-center gap-2 bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20 dark:hover:bg-indigo-500/20">
@@ -242,7 +213,6 @@ export default function InventoryManagement() {
             </div>
           </div>
 
-          {/* INVENTORY GRID */}
           <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm whitespace-nowrap">
@@ -273,9 +243,7 @@ export default function InventoryManagement() {
                           </span>
                         </td>
                         <td className="p-4 text-right">
-                          <button onClick={() => handleDelete(item.id)} className={`p-1.5 rounded transition ${isDarkMode ? 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-400' : 'text-slate-400 hover:bg-rose-50 hover:text-rose-600'}`}>
-                            <Trash2 size={16} />
-                          </button>
+                          <button onClick={() => handleDelete(item.id)} className={`p-1.5 rounded transition ${isDarkMode ? 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-400' : 'text-slate-400 hover:bg-rose-50 hover:text-rose-600'}`}><Trash2 size={16} /></button>
                         </td>
                       </tr>
                     ))
@@ -286,9 +254,7 @@ export default function InventoryManagement() {
           </div>
         </div>
 
-        {/* ======================================================== */}
         {/* MODAL 1: MANUAL ADD */}
-        {/* ======================================================== */}
         {activeModal === 'manual' && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
             <div className={`w-full max-w-md p-6 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
@@ -299,16 +265,16 @@ export default function InventoryManagement() {
               <form onSubmit={handleManualAdd} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold uppercase mb-1 opacity-70">Product Name</label>
-                  <input type="text" required value={formName} onChange={e => setFormName(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="Wireless Headphones" />
+                  <input type="text" required value={formName} onChange={e => setFormName(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold uppercase mb-1 opacity-70">Price ($)</label>
-                    <input type="number" step="0.01" required value={formPrice} onChange={e => setFormPrice(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="99.99" />
+                    <input type="number" step="0.01" required value={formPrice} onChange={e => setFormPrice(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
                   </div>
                   <div>
                     <label className="block text-xs font-bold uppercase mb-1 opacity-70">Initial Stock</label>
-                    <input type="number" required value={formQty} onChange={e => setFormQty(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="50" />
+                    <input type="number" required value={formQty} onChange={e => setFormQty(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
                   </div>
                 </div>
                 <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg mt-4 transition-all">
@@ -319,9 +285,7 @@ export default function InventoryManagement() {
           </div>
         )}
 
-        {/* ======================================================== */}
         {/* MODAL 2: BULK CSV UPLOAD */}
-        {/* ======================================================== */}
         {activeModal === 'csv' && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
             <div className={`w-full max-w-md p-6 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
@@ -356,9 +320,7 @@ export default function InventoryManagement() {
           </div>
         )}
 
-        {/* ======================================================== */}
         {/* MODAL 3: AI DOCUMENT OCR SCANNER */}
-        {/* ======================================================== */}
         {activeModal === 'ocr' && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
             <div className={`w-full max-w-3xl p-6 rounded-2xl shadow-xl flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
@@ -393,14 +355,21 @@ export default function InventoryManagement() {
                             <CheckCircle2 size={18}/> {ocrStatus.msg}
                           </div>
                         )}
+                        
+                        {/* THE MISSING ERROR BLOCK! */}
+                        {ocrStatus.type === 'error' && (
+                          <div className="p-4 border rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 font-bold text-sm flex flex-col items-center gap-2 text-center">
+                            <AlertCircle size={20} />
+                            {ocrStatus.msg}
+                            <button onClick={() => setOcrStatus({type: 'idle', msg: ''})} className="mt-2 text-xs underline text-rose-500 hover:text-rose-600 cursor-pointer">Try Again</button>
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     {/* STRUCTURED DATA REVIEW PANEL */}
                     {ocrStatus.type === 'success' && extractedReceipt && (
                       <div className="animate-fade-in border-t border-slate-200 dark:border-slate-800 pt-4">
-                        
-                        {/* Receipt Metadata */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
                           <div><span className="block text-[9px] uppercase font-bold text-slate-500">Store</span><span className="text-sm font-semibold">{extractedReceipt.storeName || 'N/A'}</span></div>
                           <div><span className="block text-[9px] uppercase font-bold text-slate-500">Receipt No</span><span className="text-sm font-semibold">{extractedReceipt.receiptNo || 'N/A'}</span></div>
@@ -408,7 +377,6 @@ export default function InventoryManagement() {
                           <div><span className="block text-[9px] uppercase font-bold text-slate-500">Total</span><span className="text-sm font-black text-indigo-500">{extractedReceipt.currency} {extractedReceipt.total}</span></div>
                         </div>
 
-                        {/* Line Items Table */}
                         <h4 className="text-xs font-black uppercase text-indigo-500 mb-3 flex items-center gap-2"><Package size={14}/> Extracted Items ({extractedReceipt.items?.length || 0})</h4>
                         
                         <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden mb-6">
