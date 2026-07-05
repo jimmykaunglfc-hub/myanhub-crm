@@ -20,9 +20,9 @@ export async function POST(req: Request) {
     const mimeTypeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
     const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
 
-    // Back to Flash - it's the fastest and best for this task!
+    // 🚀 THE FIX: Bypassing the alias and using the exact versioned model tag
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-1.5-flash-001",
     });
 
     const prompt = `You are an expert ERP accounting AI. Extract the data from the provided receipt image. 
