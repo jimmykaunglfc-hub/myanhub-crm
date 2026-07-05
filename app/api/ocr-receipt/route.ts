@@ -20,8 +20,9 @@ export async function POST(req: Request) {
     const mimeTypeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
     const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
 
-    // 🚀 THE FIX: We are now using the exact, specialized model your API key is locked to!
-    const model = genAI.getGenerativeModel({ model: "gemini-robotics-er-1.5-preview" });
+    // 🚀 THE FIX: Google unplugged the 1.5 server in April. 
+    // We must use the live 1.6-preview endpoint!
+    const model = genAI.getGenerativeModel({ model: "gemini-robotics-er-1.6-preview" });
 
     const prompt = `You are an expert ERP accounting AI. Extract the data from the provided receipt image. 
     Return ONLY a JSON object with this exact structure:
@@ -43,31 +44,15 @@ export async function POST(req: Request) {
       inlineData: { data: base64Data, mimeType: mimeType }
     };
 
-    try {
-      const result = await model.generateContent([prompt, imagePart]);
-      const responseText = result.response.text();
-      
-      if (!responseText) throw new Error("Gemini returned an empty response.");
+    const result = await model.generateContent([prompt, imagePart]);
+    const responseText = result.response.text();
+    
+    if (!responseText) throw new Error("Gemini returned an empty response.");
 
-      const cleanedText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
-      const structuredData = JSON.parse(cleanedText);
-      
-      return NextResponse.json({ success: true, data: structuredData });
-
-    } catch (apiError: any) {
-      // Diagnostic tool fallback just in case
-      if (apiError.message && apiError.message.includes('404')) {
-        const checkResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
-        const checkData = await checkResponse.json();
-        
-        const availableModels = checkData.models
-          ?.map((m: any) => m.name.replace('models/', ''))
-          .filter((m: string) => m.includes('gemini') && m.includes('1.5')) || [];
-
-        throw new Error(`Google API Key mismatch. Your specific key only has access to these models: [ ${availableModels.join(', ')} ].`);
-      }
-      throw apiError;
-    }
+    const cleanedText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const structuredData = JSON.parse(cleanedText);
+    
+    return NextResponse.json({ success: true, data: structuredData });
 
   } catch (error: any) {
     console.error("Gemini OCR Failure:", error);
