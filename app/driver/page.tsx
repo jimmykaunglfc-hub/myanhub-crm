@@ -1,5 +1,6 @@
 "use client";
 
+import { formatNumber, formatCurrency } from '../../lib/formatters';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
@@ -17,6 +18,7 @@ interface Order {
   delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
   assigned_driver_id: string | null;
   created_at: string;
+  customer_id: string; // Added to enable notifications
   customers: { name: string } | null;
 }
 
@@ -75,6 +77,41 @@ export default function DriverApp() {
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId]);
 
+  // -------------------------------------------------------------
+  // AUTOMATED TRACKING NOTIFICATION ENGINE (Driver Side)
+  // -------------------------------------------------------------
+  const sendOrderNotification = async (order: Order, newStatus: string) => {
+    if (!workspaceId) return; // Must use workspaceId to authenticate Telegram webhook
+
+    let notificationText = '';
+    
+    if (newStatus === 'picked_up') {
+      notificationText = `🚚 Order Update: Your order ${order.order_id_string} has been picked up by our driver and is on its way!`;
+    } else if (newStatus === 'arrived') {
+      notificationText = `📍 Driver Arrived: Our driver is at your location with order ${order.order_id_string}. Please be ready to receive it!`;
+    } else if (newStatus === 'delivered') {
+      notificationText = `✅ Order Delivered: Your order ${order.order_id_string} has been successfully delivered. Thank you!`;
+    }
+
+    if (!notificationText) return;
+
+    // Log the automated action inside the CRM Unified Inbox
+    await supabase.from('messages').insert({
+      customer_id: order.customer_id,
+      sender: 'Workspace Manager',
+      content: `[System Notification] Auto-Ping (Driver App): ${notificationText}`,
+      status: 'read',
+      user_id: workspaceId 
+    });
+
+    // Push the actual message to Telegram
+    fetch('/api/send-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerId: order.customer_id, text: notificationText, userId: workspaceId })
+    }).catch(err => console.error("Tracking notification failed to send.", err));
+  };
+
   // ACTION: Claim an order from the pool (INSTANT UI UPDATE)
   const claimOrder = async (orderId: string) => {
     if (!userId) return;
@@ -95,7 +132,7 @@ export default function DriverApp() {
     }
   };
 
-  // ACTION: Advance the delivery progress bar (INSTANT UI UPDATE)
+  // ACTION: Advance the delivery progress bar (INSTANT UI UPDATE & NOTIFY)
   const advanceProgress = async (orderId: string, newState: string) => {
     // 1. Optimistic UI: Move progress bar instantly
     setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, delivery_state: newState as any } : o));
@@ -106,10 +143,16 @@ export default function DriverApp() {
     if (error) {
       alert("Failed to update progress.");
       fetchDeliveries(); // Revert screen if failed
+    } else {
+      // 3. Trigger Notification based on new state
+      const targetOrder = deliveries.find(o => o.id === orderId);
+      if (targetOrder) {
+        sendOrderNotification(targetOrder, newState);
+      }
     }
   };
 
-  // ACTION: Final Delivery Submit
+  // ACTION: Final Delivery Submit (NOTIFY)
   const submitDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeDelivery) return;
@@ -136,6 +179,9 @@ export default function DriverApp() {
         payment_status: paymentStatus,
         delivery_evidence_url: uploadedUrl
       }).eq('id', activeDelivery.id);
+
+      // 3. Trigger Final Notification
+      sendOrderNotification(activeDelivery, 'delivered');
 
       setActiveDelivery(null);
       setEvidenceFile(null);
@@ -195,7 +241,7 @@ export default function DriverApp() {
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <h3 className="text-sm font-bold font-mono">{order.order_id_string}</h3>
-                  <p className={`text-lg font-black mt-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>${Number(order.total_amount).toFixed(2)}</p>
+                  <p className={`text-lg font-black mt-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatCurrency(order.total_amount, 'USD')}</p>
                 </div>
                 <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${activeTab === 'pool' ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/20 text-blue-500'}`}>
                   {activeTab === 'pool' ? 'Needs Driver' : order.delivery_state.replace('_', ' ')}
@@ -254,7 +300,7 @@ export default function DriverApp() {
               <h3 className="text-2xl font-black font-mono">{activeDelivery.order_id_string}</h3>
               <p className="text-sm font-medium opacity-60 mt-1">{activeDelivery.customers?.name}</p>
               <div className={`inline-block mt-4 px-6 py-2 rounded-xl text-xl font-black ${isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>
-                Collect: ${Number(activeDelivery.total_amount).toFixed(2)}
+                Collect: {formatCurrency(activeDelivery.total_amount, 'USD')}
               </div>
             </div>
             <form onSubmit={submitDelivery} className="space-y-6">

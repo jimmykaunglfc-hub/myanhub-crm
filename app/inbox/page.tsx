@@ -21,6 +21,9 @@ export default function UnifiedInbox() {
   const { isDarkMode } = useTheme();
   const [userId, setUserId] = useState<string | null>(null);
   
+  // NEW: Dynamic Currency State
+  const [workspaceCurrency, setWorkspaceCurrency] = useState('USD');
+  
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inventory, setInventory] = useState<Product[]>([]);
@@ -39,7 +42,7 @@ export default function UnifiedInbox() {
   const [rightPanelTab, setRightPanelTab] = useState<'order' | 'history'>('order');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedProductId, setSelectedProductId] = useState('');
-  const [orderQuantityInput, setOrderQuantityInput] = useState('1'); // Fixed: Managed as string for backspacing
+  const [orderQuantityInput, setOrderQuantityInput] = useState('1'); 
   
   // Fulfillment States
   const [contactPhone, setContactPhone] = useState('');
@@ -52,7 +55,14 @@ export default function UnifiedInbox() {
   useEffect(() => {
     const fetchUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session) setUserId(session.user.id);
+      if (session) {
+        setUserId(session.user.id);
+        // Automatically fetch the currency chosen in the Settings page
+        const { data: profile } = await supabase.from('profiles').select('currency_code').eq('id', session.user.id).single();
+        if (profile?.currency_code) {
+          setWorkspaceCurrency(profile.currency_code);
+        }
+      }
     };
     fetchUser();
   }, []);
@@ -88,7 +98,6 @@ export default function UnifiedInbox() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     if (selectedCustomerId) {
       supabase.from('messages').update({ status: 'read' }).eq('customer_id', selectedCustomerId).eq('status', 'unread').then();
-      // Reset cart and forms when switching customers to prevent cross-billing
       setCart([]); setContactPhone(''); setDeliveryAddress(''); setOrderStatusMessage(''); setRightPanelTab('order');
     }
   }, [messages, selectedCustomerId]);
@@ -121,7 +130,6 @@ export default function UnifiedInbox() {
     finally { setSending(false); }
   };
 
-  // MULTI-ITEM CART LOGIC
   const handleAddToCart = () => {
     if (!selectedProductId) return;
     const product = inventory.find(p => p.id === selectedProductId);
@@ -153,7 +161,6 @@ export default function UnifiedInbox() {
     setCart(cart.filter(item => item.product.id !== productId));
   };
 
-  // FINAL CHECKOUT LOGIC
   const handleCheckoutOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomerId || cart.length === 0 || !userId) return;
@@ -162,7 +169,6 @@ export default function UnifiedInbox() {
     const targetIdString = `MH-${Math.floor(1000 + Math.random() * 9000)}`;
     const totalAmount = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
 
-    // 1. Create the Order with Cart JSON
     const { error: orderError } = await supabase.from('orders').insert({
       customer_id: selectedCustomerId, 
       order_id_string: targetIdString, 
@@ -171,32 +177,28 @@ export default function UnifiedInbox() {
       user_id: userId,
       contact_phone: contactPhone,
       delivery_address: deliveryAddress,
-      cart_items: cart // Store the JSON array
+      cart_items: cart
     });
 
     if (orderError) { setOrderStatusMessage("Order Error"); return; }
 
-    // 2. Deduct Stock for all items
     for (const item of cart) {
       await supabase.from('inventory').update({ 
         stock_quantity: item.product.stock_quantity - item.quantity 
       }).eq('id', item.product.id);
     }
 
-    // 3. System Notification for Admin
     await supabase.from('messages').insert({
       customer_id: selectedCustomerId, sender: 'Workspace Manager',
       content: `[System Notification] Order ${targetIdString} logged for ${cart.length} item(s).`,
       status: 'read', user_id: userId
     });
 
-    // 4. Generate Customer Auto-Receipt
     let receiptItems = cart.map(item => `▪ ${formatNumber(item.quantity)}x ${item.product.name}`).join('\n');
-    const receiptText = `🎉 Order Confirmed!\n\nOrder ID: ${targetIdString}\n\nItems Ordered:\n${receiptItems}\n\nTotal Due: ${formatCurrency(totalAmount, 'USD')}\nPhone: ${contactPhone || 'N/A'}\nDeliver to: ${deliveryAddress || 'N/A'}\n\nThank you for shopping with us! We will notify you when it ships.`;
+    const receiptText = `🎉 Order Confirmed!\n\nOrder ID: ${targetIdString}\n\nItems Ordered:\n${receiptItems}\n\nTotal Due: ${formatCurrency(totalAmount, workspaceCurrency)}\nPhone: ${contactPhone || 'N/A'}\nDeliver to: ${deliveryAddress || 'N/A'}\n\nThank you for shopping with us! We will notify you when it ships.`;
     
     await handleSendMessage(undefined, receiptText);
 
-    // 5. Cleanup
     setOrderStatusMessage('Order Submitted & Receipt Sent!');
     setCart([]); setContactPhone(''); setDeliveryAddress('');
     syncCRMState();
@@ -233,7 +235,6 @@ export default function UnifiedInbox() {
         
         <div className={`flex-1 flex mt-16 overflow-hidden transition-colors duration-200 ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
           
-          {/* COLUMN 1: Feed Filter & Sidebar */}
           <div className={`w-full md:w-80 border-r flex flex-col overflow-hidden flex-shrink-0 transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
             <div className={`p-4 border-b space-y-3 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
               <h2 className="text-sm font-black uppercase tracking-wider text-slate-500 flex items-center gap-2"><MessageSquare size={16} className="text-indigo-600" /> Conversational Feeds</h2>
@@ -271,7 +272,6 @@ export default function UnifiedInbox() {
             </div>
           </div>
 
-          {/* COLUMN 2: Chat Box */}
           <div className={`flex-1 flex flex-col h-full overflow-hidden border-r transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
             {selectedCustomerId && activeChatCustomer ? (
               <>
@@ -332,12 +332,10 @@ export default function UnifiedInbox() {
             )}
           </div>
 
-          {/* COLUMN 3: ORDER & LOGISTICS PANEL */}
           <div className={`hidden lg:flex w-[340px] flex-col flex-shrink-0 p-5 overflow-y-auto custom-scrollbar transition-colors ${isDarkMode ? 'bg-slate-900 border-l border-slate-800' : 'bg-white'}`}>
             {selectedCustomerId && activeChatCustomer ? (
               <div className="space-y-6 animate-fade-in">
                 
-                {/* Right Panel Tabs */}
                 <div className="flex bg-slate-100 dark:bg-slate-800/50 p-1 rounded-lg">
                   <button onClick={() => setRightPanelTab('order')} className={`flex-1 text-[10px] font-bold py-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${rightPanelTab === 'order' ? (isDarkMode ? 'bg-slate-700 text-white shadow' : 'bg-white text-slate-900 shadow') : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
                     <ShoppingCart size={14} /> NEW ORDER
@@ -349,33 +347,61 @@ export default function UnifiedInbox() {
 
                 {rightPanelTab === 'order' ? (
                   <div className="space-y-4 animate-fade-in">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Add to Cart</label>
-                      <div className="flex gap-2">
-                        <select value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)} className={`flex-1 px-3 py-2.5 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 border appearance-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`}>
-                          <option value="" disabled>Choose an item...</option>
-                          {availableInventory.map(p => <option key={p.id} value={p.id}>{p.name} - {formatCurrency(p.price, 'USD')}</option>)}
+                    
+                    {/* REDESIGNED ADD TO CART SECTION */}
+                    <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                      <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-3">1. Add Items to Order</label>
+                      <div className="space-y-3">
+                        <select 
+                          value={selectedProductId} 
+                          onChange={e => setSelectedProductId(e.target.value)} 
+                          className={`w-full px-3 py-2.5 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 border appearance-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}
+                        >
+                          <option value="" disabled>Choose a product...</option>
+                          {availableInventory.map(p => <option key={p.id} value={p.id}>{p.name} - {formatCurrency(p.price, workspaceCurrency)}</option>)}
                         </select>
-                        <input type="text" value={orderQuantityInput} onChange={e => setOrderQuantityInput(e.target.value)} placeholder="Qty" className={`w-16 px-2 py-2.5 rounded-lg text-xs font-semibold text-center focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
-                        <button onClick={handleAddToCart} disabled={!selectedProductId} className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-400 p-2.5 rounded-lg transition disabled:opacity-50"><Plus size={16}/></button>
+                        
+                        <div className="flex gap-2">
+                          <input 
+                            type="number" 
+                            min="1"
+                            value={orderQuantityInput} 
+                            onChange={e => setOrderQuantityInput(e.target.value)} 
+                            placeholder="Qty" 
+                            className={`w-20 px-3 py-2.5 rounded-lg text-xs font-semibold text-center focus:outline-none focus:border-indigo-500 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`} 
+                          />
+                          <button 
+                            type="button"
+                            onClick={handleAddToCart} 
+                            disabled={!selectedProductId} 
+                            className="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-xs py-2.5 rounded-lg transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+                          >
+                            <Plus size={14}/> Add to Cart
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Cart Items Display */}
-                    {cart.length > 0 && (
-                      <div className={`p-3 rounded-xl border space-y-2 ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                        <h4 className="text-[10px] font-bold text-slate-500 uppercase border-b pb-2 dark:border-slate-800">Shopping Cart ({cart.length})</h4>
-                        {cart.map((item, idx) => (
+                    {/* REDESIGNED SHOPPING CART DISPLAY */}
+                    <div className={`p-4 rounded-xl border space-y-3 ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <h4 className="text-[10px] font-bold text-indigo-500 uppercase border-b pb-2 dark:border-slate-800">2. Shopping Cart ({cart.length})</h4>
+                      
+                      {cart.length === 0 ? (
+                        <div className="text-xs text-slate-400 text-center py-3 font-medium">
+                          Cart is empty. Add a product above.
+                        </div>
+                      ) : (
+                        cart.map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs">
-                            <span className="font-semibold truncate">{formatNumber(item.quantity)}x {item.product.name}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-slate-500">{formatCurrency(item.quantity * item.product.price, 'USD')}</span>
-                              <button onClick={() => removeFromCart(item.product.id)} className="text-rose-400 hover:text-rose-600"><Trash2 size={12}/></button>
+                            <span className="font-semibold truncate pr-2">{formatNumber(item.quantity)}x {item.product.name}</span>
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                              <span className="font-mono text-slate-500">{formatCurrency(item.quantity * item.product.price, workspaceCurrency)}</span>
+                              <button type="button" onClick={() => removeFromCart(item.product.id)} className="text-rose-400 hover:text-rose-600 transition-colors"><Trash2 size={14}/></button>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        ))
+                      )}
+                    </div>
 
                     <form onSubmit={handleCheckoutOrder} className="space-y-4 pt-2">
                       <div>
@@ -398,7 +424,7 @@ export default function UnifiedInbox() {
 
                       <div className={`p-3 rounded-lg border flex justify-between items-center ${isDarkMode ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-indigo-50 border-indigo-100'}`}>
                         <span className={`text-[10px] font-bold uppercase ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Total Due</span>
-                        <span className={`text-base font-black ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>{formatCurrency(cartTotal, 'USD')}</span>
+                        <span className={`text-base font-black ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>{formatCurrency(cartTotal, workspaceCurrency)}</span>
                       </div>
 
                       <button type="submit" disabled={cart.length === 0} className={`w-full text-white font-bold text-xs py-3 rounded-lg transition shadow flex items-center justify-center gap-1.5 disabled:opacity-50 ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-900 hover:bg-indigo-600'}`}>
@@ -413,7 +439,6 @@ export default function UnifiedInbox() {
                     )}
                   </div>
                 ) : (
-                  // HISTORY TAB
                   <div className="space-y-4 animate-fade-in pt-2">
                     <h3 className="text-[10px] font-bold text-slate-500 uppercase border-b pb-2 dark:border-slate-800">Past Orders ({customerOrderHistory.length})</h3>
                     {customerOrderHistory.length === 0 ? (
@@ -427,7 +452,7 @@ export default function UnifiedInbox() {
                           </div>
                           <div className="flex justify-between items-center">
                             <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${order.status === 'fulfilled' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>{order.status}</span>
-                            <span className="text-sm font-black">{formatCurrency(order.total_amount, 'USD')}</span>
+                            <span className="text-sm font-black">{formatCurrency(order.total_amount, workspaceCurrency)}</span>
                           </div>
                         </div>
                       ))
