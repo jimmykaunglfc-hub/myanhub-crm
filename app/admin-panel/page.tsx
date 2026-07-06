@@ -26,7 +26,6 @@ interface PlatformOrder {
   customers: { name: string; platform: string } | null;
 }
 
-// NEW: Interface for our telemetry logs
 interface IntegrationLog {
   id: string;
   created_at: string;
@@ -51,7 +50,7 @@ export default function SuperAdminDashboard() {
   // Data State Arrays
   const [workspaces, setWorkspaces] = useState<ClientWorkspace[]>([]);
   const [orders, setOrders] = useState<PlatformOrder[]>([]);
-  const [integrationLogs, setIntegrationLogs] = useState<IntegrationLog[]>([]); // NEW: State for logs
+  const [integrationLogs, setIntegrationLogs] = useState<IntegrationLog[]>([]);
   const [totalMessages, setTotalMessages] = useState<number>(0);
   const [platformGmv, setPlatformGmv] = useState<number>(0);
   
@@ -60,17 +59,31 @@ export default function SuperAdminDashboard() {
   const [newPassword, setNewPassword] = useState('');
   const [provisionStatus, setProvisionStatus] = useState('');
 
-  // 1. Verify Master Access on Load
+  // 1. Verify Master Access on Load (Upgraded to check Roles)
   useEffect(() => {
     const verifyMasterAccess = async () => {
       const { data: { session }, error } = await supabase.auth.getSession();
       
-      if (error || !session || session.user.email !== MASTER_ADMIN_EMAIL) {
+      if (error || !session) {
         router.push('/login');
-      } else {
-        setAdminEmail(session.user.email);
+        return;
+      }
+
+      // Check the database to see if they hold the superadmin role
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single();
+
+      // Allow access if they are a superadmin OR if they are the original master email
+      if (profile?.role === 'superadmin' || session.user.email === MASTER_ADMIN_EMAIL) {
+        setAdminEmail(session.user.email || 'Admin');
         setAuthorized(true);
         fetchSystemData(); 
+      } else {
+        // Kick them out if they are just a regular manager/staff
+        router.push('/login');
       }
     };
 
@@ -85,7 +98,7 @@ export default function SuperAdminDashboard() {
     const { data: workspaceData } = await supabase.from('system_client_workspaces').select('*').order('created_at', { ascending: false });
     if (workspaceData) setWorkspaces(workspaceData);
 
-    // NEW: Fetch Integration Logs (Limit to 15 most recent)
+    // Fetch Integration Logs (Limit to 15 most recent)
     const { data: logsData } = await supabase.from('system_integration_logs').select('*').order('created_at', { ascending: false }).limit(15);
     if (logsData) setIntegrationLogs(logsData);
 
@@ -104,13 +117,12 @@ export default function SuperAdminDashboard() {
     setLoading(false);
   };
 
-  // 3. NEW: Real-Time Listener for the Log Terminal
+  // 3. Real-Time Listener for the Log Terminal
   useEffect(() => {
     if (!authorized) return;
 
     const channel = supabase.channel('live-telemetry-layer')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'system_integration_logs' }, (payload) => {
-        // Drop the new log into the top of our array instantly
         setIntegrationLogs(prev => [payload.new as IntegrationLog, ...prev.slice(0, 14)]);
       })
       .subscribe();
@@ -317,7 +329,7 @@ export default function SuperAdminDashboard() {
                   )}
                 </div>
 
-                {/* NEW: Live Webhook & API Channels Logger Terminal */}
+                {/* Live Webhook & API Channels Logger Terminal */}
                 <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl flex flex-col">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
