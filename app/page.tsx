@@ -1,5 +1,6 @@
 "use client";
 
+import { formatNumber, formatCurrency } from '../lib/formatters';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -34,6 +35,8 @@ export default function Dashboard() {
   const router = useRouter(); 
   
   const [userId, setUserId] = useState<string | null>(null);
+  const [workspaceCurrency, setWorkspaceCurrency] = useState('USD'); // Dynamic Currency State
+  
   const [loading, setLoading] = useState(true);
   const [greeting, setGreeting] = useState('Good day');
 
@@ -63,10 +66,10 @@ export default function Dashboard() {
         return;
       }
       
-      // NEW: Check the user's role!
+      // Check the user's role AND fetch their currency code
       const { data: profile } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, currency_code')
         .eq('id', session.user.id)
         .single();
 
@@ -74,6 +77,11 @@ export default function Dashboard() {
       if (profile?.role === 'driver') {
         router.replace('/driver');
         return;
+      }
+      
+      // Set currency if it exists in the profile
+      if (profile?.currency_code) {
+        setWorkspaceCurrency(profile.currency_code);
       }
       
       // If they are Admin/Staff, let them in
@@ -186,19 +194,21 @@ export default function Dashboard() {
                   <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Sales Today</span>
                   <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}><TrendingUp size={16} /></div>
                 </div>
-                <div className="text-3xl font-black">${salesToday.toFixed(2)}</div>
+                {/* DYNAMIC CURRENCY & COMMAS ADDED HERE */}
+                <div className="text-3xl font-black">{formatCurrency(salesToday, workspaceCurrency)}</div>
                 <div className="text-xs text-emerald-500 font-medium mt-2 flex items-center gap-1">
                   Live calculation
                 </div>
               </div>
 
-              {/* Unread Messages Card */}
+              {/* Unread Messages Card (Action Required Focus) */}
               <div className={`p-6 rounded-2xl shadow-md transition-colors ${unreadCount > 0 ? 'bg-indigo-600 text-white border-indigo-500' : (isDarkMode ? 'bg-slate-900 border-slate-800 border shadow-sm' : 'bg-white border-slate-200 border shadow-sm')}`}>
                 <div className="flex justify-between items-center mb-4">
                   <span className={`text-xs font-bold uppercase tracking-wider ${unreadCount > 0 ? 'text-indigo-200' : (isDarkMode ? 'text-slate-400' : 'text-slate-500')}`}>Unread Messages</span>
                   <div className={`p-2 rounded-lg ${unreadCount > 0 ? 'bg-indigo-500/50 text-white' : (isDarkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-50 text-indigo-600')}`}><MessageSquare size={16} /></div>
                 </div>
-                <div className="text-3xl font-black">{unreadCount}</div>
+                {/* GLOBAL NUMBER FORMATTER ADDED HERE */}
+                <div className="text-3xl font-black">{formatNumber(unreadCount)}</div>
                 <div className={`text-xs font-medium mt-2 flex items-center gap-1 ${unreadCount > 0 ? 'text-indigo-200' : (isDarkMode ? 'text-slate-500' : 'text-slate-400')}`}>
                   {unreadCount > 0 ? 'Action required' : 'Inbox zero achieved'}
                 </div>
@@ -210,7 +220,8 @@ export default function Dashboard() {
                   <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Active Orders</span>
                   <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600'}`}><ShoppingBag size={16} /></div>
                 </div>
-                <div className="text-3xl font-black">{activeOrdersCount}</div>
+                {/* GLOBAL NUMBER FORMATTER ADDED HERE */}
+                <div className="text-3xl font-black">{formatNumber(activeOrdersCount)}</div>
                 <div className="text-xs text-amber-500 font-medium mt-2 flex items-center gap-1">
                   Pending fulfillment
                 </div>
@@ -222,7 +233,8 @@ export default function Dashboard() {
                   <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Customers</span>
                   <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}><Users size={16} /></div>
                 </div>
-                <div className="text-3xl font-black">{newCustomersCount}</div>
+                {/* GLOBAL NUMBER FORMATTER ADDED HERE */}
+                <div className="text-3xl font-black">{formatNumber(newCustomersCount)}</div>
                 <div className={`text-xs font-medium mt-2 flex items-center gap-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
                   Saved in CRM directory
                 </div>
@@ -297,7 +309,8 @@ export default function Dashboard() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-black text-indigo-500">${Number(order.total_amount).toFixed(2)}</p>
+                          {/* DYNAMIC CURRENCY APPLIED HERE */}
+                          <p className="text-sm font-black text-indigo-500">{formatCurrency(Number(order.total_amount), workspaceCurrency)}</p>
                           <p className="text-[10px] text-slate-500 font-mono mt-1">{new Date(order.created_at).toLocaleDateString()}</p>
                         </div>
                       </div>
