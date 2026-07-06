@@ -10,6 +10,9 @@ export async function POST(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const userId = url.searchParams.get('userId');
+    
+    // Auto-detect the base URL so we don't rely on environment variables for internal routing
+    const baseUrl = url.origin;
 
     if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
 
@@ -44,11 +47,18 @@ export async function POST(req: NextRequest) {
       const { data: profile } = await supabase.from('profiles').select('ai_auto_respond, currency_code').eq('id', userId).single();
       
       if (profile?.ai_auto_respond && customerId) {
+        
+        // Safety Check: Make sure the API key exists
+        if (!process.env.GEMINI_API_KEY) {
+          console.error("CRITICAL: GEMINI_API_KEY is missing from Vercel Environment Variables!");
+          return NextResponse.json({ success: true, warning: "AI enabled but missing API key" });
+        }
+
         // Fetch Live Inventory context for the AI
         const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', userId);
         const stockContext = inventory?.map(i => `- ${i.name} (Stock: ${i.stock_quantity}, Price: ${i.price} ${profile.currency_code})`).join('\n') || 'No items available.';
 
-        // Prompt Engineering: We teach the AI to output a secret JSON tag if an order is confirmed.
+        // Prompt Engineering
         const systemPrompt = `
           You are a friendly, concise sales assistant for a store. 
           Here is our live inventory right now:
@@ -62,9 +72,10 @@ export async function POST(req: NextRequest) {
           __ORDER__ {"itemName": "[Exact Name from Inventory]", "qty": [Number], "address": "[Address]", "phone": "[Phone]"}
         `;
 
-        // Call Google Gemini API directly
+        // Call Google Gemini API
         const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\nCustomer said: "${text}"\nYour Reply:` }] }] })
         });
         
@@ -99,28 +110,32 @@ export async function POST(req: NextRequest) {
 
                 // Send the receipt text to the customer
                 const receiptText = `🎉 AI Order Confirmed!\n\nOrder ID: ${orderIdStr}\nItem: ${orderData.qty}x ${targetItem.name}\nTotal: ${totalAmount} ${profile.currency_code}\n\nOur team will dispatch this shortly!`;
-                await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/send-message`, {
+                await fetch(`${baseUrl}/api/send-message`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ customerId, text: receiptText, userId })
                 });
 
-                // Log the AI message in CRM as "Workspace Manager" with a robot emoji
+                // Log the AI message in CRM
                 await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [AI Auto-Billed] \n${receiptText}`, status: 'read', user_id: userId });
                 
                 return NextResponse.json({ success: true });
               }
-            } catch (e) { console.error("AI JSON parsing failed"); }
+            } catch (e) { 
+              console.error("AI JSON parsing failed", e); 
+            }
           }
 
           // If no order, just send the conversational text
           const friendlyReply = rawAiReply.replace(/__ORDER__.*/g, '').trim();
           
-          await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/send-message`, {
+          await fetch(`${baseUrl}/api/send-message`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ customerId, text: friendlyReply, userId })
           });
 
           await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 ${friendlyReply}`, status: 'read', user_id: userId });
+        } else {
+          console.error("Gemini API Request Failed:", await geminiRes.text());
         }
       }
     }
@@ -128,6 +143,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
     
   } catch (error: any) {
+    console.error("Webhook Error:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
