@@ -26,8 +26,6 @@ export default function EnhancedSettings() {
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [userEmail, setUserEmail] = useState('Loading...');
   const [userId, setUserId] = useState('');
-  
-  // Currency States
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [isSavingCurrency, setIsSavingCurrency] = useState(false);
   
@@ -64,19 +62,27 @@ export default function EnhancedSettings() {
     initializeSettings();
   }, []);
 
-  // SAFELY HANDLE CURRENCY SAVING
+  // SAFELY HANDLE CURRENCY SAVING (Upgraded to catch Silent Failures)
   const handleCurrencyChange = async (newCurrency: string) => {
     setCurrencyCode(newCurrency);
     setIsSavingCurrency(true);
     
-    const { error } = await supabase.from('profiles').update({ currency_code: newCurrency }).eq('id', userId);
+    // We add .select() to force Supabase to return the row it just updated
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ currency_code: newCurrency })
+      .eq('id', userId)
+      .select();
     
     if (error) {
-      alert(`DATABASE ERROR: ${error.message}\n\nPlease run the SQL snippet in Supabase to add the currency_code column!`);
-      setCurrencyCode('USD'); // Revert UI if it fails
+      alert(`DATABASE ERROR: ${error.message}\n\nPlease check your database permissions.`);
+      setCurrencyCode('USD'); // Revert UI
+    } else if (!data || data.length === 0) {
+      alert("SILENT FAILURE: The database updated 0 rows because your Admin account is missing a row in the 'profiles' table. Please run the SQL snippet to fix this!");
+      setCurrencyCode('USD'); // Revert UI
     }
     
-    setTimeout(() => setIsSavingCurrency(false), 800); // Visual success feedback
+    setTimeout(() => setIsSavingCurrency(false), 800); 
   };
 
   const handleSaveChannelConfig = async (e: React.FormEvent) => {
