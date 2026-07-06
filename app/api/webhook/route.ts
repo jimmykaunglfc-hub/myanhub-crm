@@ -72,8 +72,8 @@ export async function POST(req: NextRequest) {
           __ORDER__ {"itemName": "[Exact Name from Inventory]", "qty": [Number], "address": "[Address]", "phone": "[Phone]"}
         `;
 
-        // Call Google Gemini API
-        const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+        // Call Google Gemini API (Upgraded to Gemini 2.5 Flash)
+        const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\nCustomer said: "${text}"\nYour Reply:` }] }] })
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
 
                 const receiptText = `🎉 AI Order Confirmed!\n\nOrder ID: ${orderIdStr}\nItem: ${orderData.qty}x ${targetItem.name}\nTotal: ${totalAmount} ${profile.currency_code}\n\nOur team will dispatch this shortly!`;
                 
-                // CRITICAL FIX: Save to Database FIRST so it appears on screen
+                // Save to Database FIRST so it appears on screen
                 await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [AI Auto-Billed] \n${receiptText}`, status: 'read', user_id: userId });
                 
                 // Shielded Internal Push
@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
           // If no order, just send the conversational text
           const friendlyReply = rawAiReply.replace(/__ORDER__.*/g, '').trim();
           
-          // CRITICAL FIX: Save to Database FIRST so it appears on screen
+          // Save to Database FIRST so it appears on screen
           await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 ${friendlyReply}`, status: 'read', user_id: userId });
           
           // Shielded Internal Push
