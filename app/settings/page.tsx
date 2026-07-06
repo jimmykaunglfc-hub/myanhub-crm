@@ -7,7 +7,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Sliders, Info, MessageSquare, MessageCircle, ShoppingBag, 
-  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote
+  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote, Bot
 } from 'lucide-react';
 
 type ChannelType = 'facebook' | 'telegram' | 'viber' | 'tiktok' | 'whatsapp' | 'line';
@@ -29,6 +29,9 @@ export default function EnhancedSettings() {
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [isSavingCurrency, setIsSavingCurrency] = useState(false);
   
+  // NEW: AI Auto-Pilot State
+  const [aiEnabled, setAiEnabled] = useState(false);
+  
   // Integration States
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [activeChannel, setActiveChannel] = useState<ChannelType | null>(null);
@@ -40,7 +43,7 @@ export default function EnhancedSettings() {
   const [newPassword, setNewPassword] = useState('');
   const [profileStatus, setProfileStatus] = useState('');
 
-  // 1. Fetch Session, Profile (Currency), & Integrations
+  // 1. Fetch Session, Profile (Currency & AI), & Integrations
   useEffect(() => {
     const initializeSettings = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -48,10 +51,18 @@ export default function EnhancedSettings() {
         setUserEmail(user.email || '');
         setUserId(user.id);
         
-        // Fetch User Profile for Currency Configuration
-        const { data: profile } = await supabase.from('profiles').select('currency_code').eq('id', user.id).single();
+        // Fetch User Profile for Currency and AI Configuration
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('currency_code, ai_auto_respond')
+          .eq('id', user.id)
+          .single();
+          
         if (profile?.currency_code) {
           setCurrencyCode(profile.currency_code);
+        }
+        if (profile?.ai_auto_respond !== undefined) {
+          setAiEnabled(profile.ai_auto_respond);
         }
 
         // Fetch Active Integrations
@@ -62,12 +73,11 @@ export default function EnhancedSettings() {
     initializeSettings();
   }, []);
 
-  // SAFELY HANDLE CURRENCY SAVING (Upgraded to catch Silent Failures)
+  // SAFELY HANDLE CURRENCY SAVING
   const handleCurrencyChange = async (newCurrency: string) => {
     setCurrencyCode(newCurrency);
     setIsSavingCurrency(true);
     
-    // We add .select() to force Supabase to return the row it just updated
     const { data, error } = await supabase
       .from('profiles')
       .update({ currency_code: newCurrency })
@@ -76,13 +86,29 @@ export default function EnhancedSettings() {
     
     if (error) {
       alert(`DATABASE ERROR: ${error.message}\n\nPlease check your database permissions.`);
-      setCurrencyCode('USD'); // Revert UI
+      setCurrencyCode('USD');
     } else if (!data || data.length === 0) {
-      alert("SILENT FAILURE: The database updated 0 rows because your Admin account is missing a row in the 'profiles' table. Please run the SQL snippet to fix this!");
-      setCurrencyCode('USD'); // Revert UI
+      alert("SILENT FAILURE: Database missing row in 'profiles'.");
+      setCurrencyCode('USD');
     }
     
     setTimeout(() => setIsSavingCurrency(false), 800); 
+  };
+
+  // NEW: Toggle AI Auto-Pilot function
+  const toggleAiPilot = async () => {
+    const newState = !aiEnabled;
+    setAiEnabled(newState);
+    
+    const { error } = await supabase
+      .from('profiles')
+      .update({ ai_auto_respond: newState })
+      .eq('id', userId);
+      
+    if (error) {
+      alert(`AI UPDATE ERROR: ${error.message}\n\nDid you run the SQL command to add the ai_auto_respond column?`);
+      setAiEnabled(!newState); // revert on error
+    }
   };
 
   const handleSaveChannelConfig = async (e: React.FormEvent) => {
@@ -183,7 +209,7 @@ export default function EnhancedSettings() {
           <div className={`p-6 md:p-8 rounded-2xl border shadow-sm transition-colors duration-200 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
             <h3 className="text-lg font-bold mb-6 flex items-center gap-2"><Sliders size={18} className="text-indigo-600" /> System Preferences</h3>
             
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Box 1: Env Mode */}
               <div className={`p-5 rounded-xl flex flex-col justify-between transition-colors border ${isDarkMode ? 'bg-slate-950/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
                 <div>
@@ -238,6 +264,27 @@ export default function EnhancedSettings() {
                       <span className="text-slate-400 text-xs">▼</span>
                     )}
                   </div>
+                </div>
+              </div>
+
+              {/* NEW BOX 4: AI Auto-Pilot */}
+              <div className={`p-5 rounded-xl flex flex-col justify-between transition-all border ${aiEnabled ? 'shadow-[0_0_15px_rgba(99,102,241,0.25)] border-indigo-500/50' : ''} ${isDarkMode ? 'bg-indigo-950/10' : 'bg-indigo-50/50'}`}>
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <span className="block text-sm font-bold mb-1 text-indigo-600 dark:text-indigo-400">AI Auto-Pilot</span>
+                    <span className={`text-[10px] leading-relaxed block mb-4 font-bold ${isDarkMode ? 'text-indigo-300/70' : 'text-indigo-700/70'}`}>Autonomous replies & order logging.</span>
+                  </div>
+                  <div className={`p-2 rounded-lg flex-shrink-0 bg-indigo-600 text-white ${aiEnabled ? 'animate-pulse' : ''}`}>
+                    <Bot size={18} />
+                  </div>
+                </div>
+                <div className="flex justify-between items-center pt-4 border-t border-indigo-500/20">
+                  <span className={`text-xs font-black uppercase tracking-wider ${aiEnabled ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`}>
+                    {aiEnabled ? 'ONLINE' : 'OFFLINE'}
+                  </span>
+                  <button onClick={toggleAiPilot} className={`w-14 h-7 flex-shrink-0 rounded-full relative flex items-center p-1 transition-colors ${aiEnabled ? 'bg-indigo-600' : isDarkMode ? 'bg-slate-700' : 'bg-slate-300'}`}>
+                    <span className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-300 block ${aiEnabled ? 'translate-x-7' : 'translate-x-0'}`} />
+                  </button>
                 </div>
               </div>
 
