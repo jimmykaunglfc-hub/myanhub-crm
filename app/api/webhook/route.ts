@@ -10,8 +10,6 @@ export async function POST(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const userId = url.searchParams.get('userId');
-    
-    // Auto-detect the base URL robustly
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${url.protocol}//${url.host}`;
 
     if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
@@ -48,17 +46,14 @@ export async function POST(req: NextRequest) {
       
       if (profile?.ai_auto_respond && customerId) {
         
-        // Safety Check: API Key
         if (!process.env.GEMINI_API_KEY) {
-          await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [System Error: GEMINI_API_KEY is missing from Vercel]`, status: 'read', user_id: userId });
+          console.error("Missing GEMINI_API_KEY");
           return NextResponse.json({ success: true });
         }
 
-        // Fetch Live Inventory context for the AI
         const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', userId);
         const stockContext = inventory?.map(i => `- ${i.name} (Stock: ${i.stock_quantity}, Price: ${i.price} ${profile.currency_code})`).join('\n') || 'No items available.';
 
-        // Prompt Engineering
         const systemPrompt = `
           You are a friendly, concise sales assistant for a store. 
           Here is our live inventory right now:
@@ -72,7 +67,6 @@ export async function POST(req: NextRequest) {
           __ORDER__ {"itemName": "[Exact Name from Inventory]", "qty": [Number], "address": "[Address]", "phone": "[Phone]"}
         `;
 
-        // Call Google Gemini API (Upgraded to Gemini 2.5 Flash)
         const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' },
@@ -83,67 +77,77 @@ export async function POST(req: NextRequest) {
           const aiData = await geminiRes.json();
           const rawAiReply = aiData.candidates[0].content.parts[0].text;
           
-          // Check if AI decided to create an order!
           if (rawAiReply.includes('__ORDER__')) {
             const splitReply = rawAiReply.split('__ORDER__');
             const friendlyReply = splitReply[0].trim();
-            const orderJsonString = splitReply[1].trim();
+            
+            // Clean AI formatting artifacts
+            let orderJsonString = splitReply[1].trim();
+            orderJsonString = orderJsonString.replace(/```json/gi, '').replace(/```/g, '').trim();
 
             try {
               const orderData = JSON.parse(orderJsonString);
               const targetItem = inventory?.find(i => i.name.toLowerCase() === orderData.itemName.toLowerCase());
               
               if (targetItem && targetItem.stock_quantity >= orderData.qty) {
-                // Generate Order ID & Total
                 const orderIdStr = `MH-${Math.floor(1000 + Math.random() * 9000)}`;
                 const totalAmount = targetItem.price * orderData.qty;
                 
-                // 1. Insert Order
-                await supabase.from('orders').insert({
-                  customer_id: customerId, user_id: userId, order_id_string: orderIdStr,
-                  total_amount: totalAmount, status: 'pending', contact_phone: orderData.phone,
-                  delivery_address: orderData.address, cart_items: [{ product: targetItem, quantity: orderData.qty }]
+                // Strict Required Fields so Database Accepts Order!
+                const { error: orderError } = await supabase.from('orders').insert({
+                  customer_id: customerId, 
+                  user_id: userId, 
+                  order_id_string: orderIdStr,
+                  total_amount: totalAmount, 
+                  status: 'pending', 
+                  delivery_state: 'unassigned', // Prevents DB rejection
+                  payment_status: 'Pending',    // Prevents DB rejection
+                  contact_phone: orderData.phone,
+                  delivery_address: orderData.address, 
+                  cart_items: [{ product: targetItem, quantity: orderData.qty }]
                 });
 
-                // 2. Deduct Stock
-                await supabase.from('inventory').update({ stock_quantity: targetItem.stock_quantity - orderData.qty }).eq('id', targetItem.id);
+                if (!orderError) {
+                  await supabase.from('inventory').update({ stock_quantity: targetItem.stock_quantity - orderData.qty }).eq('id', targetItem.id);
+                } else {
+                  console.error("Database Order Insert Failed:", orderError.message);
+                }
 
-                const receiptText = `🎉 AI Order Confirmed!\n\nOrder ID: ${orderIdStr}\nItem: ${orderData.qty}x ${targetItem.name}\nTotal: ${totalAmount} ${profile.currency_code}\n\nOur team will dispatch this shortly!`;
+                // Push ONE fully formatted message directly to API
+                const receiptText = `🤖 [AI Auto-Billed]\n🎉 AI Order Confirmed!\n\nOrder ID: ${orderIdStr}\nItem: ${orderData.qty}x ${targetItem.name}\nTotal: ${totalAmount} ${profile.currency_code}\n\nOur team will dispatch this shortly!`;
                 
-                // Save to Database FIRST so it appears on screen
-                await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [AI Auto-Billed] \n${receiptText}`, status: 'read', user_id: userId });
-                
-                // Shielded Internal Push
                 try {
                   await fetch(`${baseUrl}/api/send-message`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ customerId, text: receiptText, userId })
                   });
-                } catch (e) { console.error("Internal Push Failed", e); }
+                } catch (e) { console.error("API Push Failed", e); }
                 
                 return NextResponse.json({ success: true });
               }
-            } catch (e) { console.error("AI JSON parsing failed"); }
+            } catch (e) { console.error("AI JSON parsing failed", e); }
           }
 
-          // If no order, just send the conversational text
-          const friendlyReply = rawAiReply.replace(/__ORDER__.*/g, '').trim();
+          // Normal Conversational Reply (One Push Only)
+          // FIX: Changed from /__ORDER__.*/gs to /__ORDER__[\s\S]*/g to satisfy TypeScript!
+          const friendlyReply = rawAiReply.replace(/__ORDER__[\s\S]*/g, '').trim();
           
-          // Save to Database FIRST so it appears on screen
-          await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 ${friendlyReply}`, status: 'read', user_id: userId });
-          
-          // Shielded Internal Push
           try {
             await fetch(`${baseUrl}/api/send-message`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ customerId, text: friendlyReply, userId })
+              body: JSON.stringify({ customerId, text: `🤖 ${friendlyReply}`, userId })
             });
-          } catch (e) { console.error("Internal Push Failed", e); }
+          } catch (e) { console.error("API Push Failed", e); }
 
         } else {
-          // If Gemini API fails completely, tell the user in the CRM
+          // Fallback Error Logging
           const errObj = await geminiRes.json();
-          await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [System Alert: AI Provider Error - ${errObj.error?.message || 'Unknown'}]`, status: 'read', user_id: userId });
+          try {
+            await fetch(`${baseUrl}/api/send-message`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ customerId, text: `🤖 [System Error: ${errObj.error?.message || 'Unknown API failure'}]`, userId })
+            });
+          } catch (e) {}
         }
       }
     }
