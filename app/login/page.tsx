@@ -36,15 +36,17 @@ export default function LoginPage() {
       if (error) throw error;
 
       if (data.user) {
-        // NEW: Check role immediately upon login
+        // Check role immediately upon login
         const { data: profile } = await supabase
           .from('profiles')
           .select('role')
           .eq('id', data.user.id)
           .single();
 
-        // Push to the correct portal based on their assigned role
-        if (profile?.role === 'driver') {
+        // VIP ROUTING: Push to the correct portal based on their assigned role
+        if (profile?.role === 'superadmin') {
+          router.push('/admin-panel');
+        } else if (profile?.role === 'driver') {
           router.push('/driver');
         } else {
           router.push('/');
