@@ -11,8 +11,8 @@ export async function POST(req: NextRequest) {
     const url = new URL(req.url);
     const userId = url.searchParams.get('userId');
     
-    // Auto-detect the base URL so we don't rely on environment variables for internal routing
-    const baseUrl = url.origin;
+    // Auto-detect the base URL robustly
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${url.protocol}//${url.host}`;
 
     if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
 
@@ -48,10 +48,10 @@ export async function POST(req: NextRequest) {
       
       if (profile?.ai_auto_respond && customerId) {
         
-        // Safety Check: Make sure the API key exists
+        // Safety Check: API Key
         if (!process.env.GEMINI_API_KEY) {
-          console.error("CRITICAL: GEMINI_API_KEY is missing from Vercel Environment Variables!");
-          return NextResponse.json({ success: true, warning: "AI enabled but missing API key" });
+          await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [System Error: GEMINI_API_KEY is missing from Vercel]`, status: 'read', user_id: userId });
+          return NextResponse.json({ success: true });
         }
 
         // Fetch Live Inventory context for the AI
@@ -108,34 +108,42 @@ export async function POST(req: NextRequest) {
                 // 2. Deduct Stock
                 await supabase.from('inventory').update({ stock_quantity: targetItem.stock_quantity - orderData.qty }).eq('id', targetItem.id);
 
-                // Send the receipt text to the customer
                 const receiptText = `🎉 AI Order Confirmed!\n\nOrder ID: ${orderIdStr}\nItem: ${orderData.qty}x ${targetItem.name}\nTotal: ${totalAmount} ${profile.currency_code}\n\nOur team will dispatch this shortly!`;
-                await fetch(`${baseUrl}/api/send-message`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ customerId, text: receiptText, userId })
-                });
-
-                // Log the AI message in CRM
+                
+                // CRITICAL FIX: Save to Database FIRST so it appears on screen
                 await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [AI Auto-Billed] \n${receiptText}`, status: 'read', user_id: userId });
+                
+                // Shielded Internal Push
+                try {
+                  await fetch(`${baseUrl}/api/send-message`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ customerId, text: receiptText, userId })
+                  });
+                } catch (e) { console.error("Internal Push Failed", e); }
                 
                 return NextResponse.json({ success: true });
               }
-            } catch (e) { 
-              console.error("AI JSON parsing failed", e); 
-            }
+            } catch (e) { console.error("AI JSON parsing failed"); }
           }
 
           // If no order, just send the conversational text
           const friendlyReply = rawAiReply.replace(/__ORDER__.*/g, '').trim();
           
-          await fetch(`${baseUrl}/api/send-message`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customerId, text: friendlyReply, userId })
-          });
-
+          // CRITICAL FIX: Save to Database FIRST so it appears on screen
           await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 ${friendlyReply}`, status: 'read', user_id: userId });
+          
+          // Shielded Internal Push
+          try {
+            await fetch(`${baseUrl}/api/send-message`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ customerId, text: friendlyReply, userId })
+            });
+          } catch (e) { console.error("Internal Push Failed", e); }
+
         } else {
-          console.error("Gemini API Request Failed:", await geminiRes.text());
+          // If Gemini API fails completely, tell the user in the CRM
+          const errObj = await geminiRes.json();
+          await supabase.from('messages').insert({ customer_id: customerId, sender: 'Workspace Manager', content: `🤖 [System Alert: AI Provider Error - ${errObj.error?.message || 'Unknown'}]`, status: 'read', user_id: userId });
         }
       }
     }
