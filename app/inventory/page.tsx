@@ -26,6 +26,10 @@ export default function InventoryManagement() {
   const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
+  
+  // NEW: Dynamic Currency State
+  const [workspaceCurrency, setWorkspaceCurrency] = useState('USD');
+  
   const [inventory, setInventory] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -53,6 +57,12 @@ export default function InventoryManagement() {
       const { data: { session }, error } = await supabase.auth.getSession();
       if (error || !session) { router.replace('/login'); return; }
       setUserId(session.user.id);
+      
+      // Automatically fetch the currency chosen in the Settings page
+      const { data: profile } = await supabase.from('profiles').select('currency_code').eq('id', session.user.id).single();
+      if (profile?.currency_code) {
+        setWorkspaceCurrency(profile.currency_code);
+      }
     };
     checkSession();
   }, [router]);
@@ -237,7 +247,10 @@ export default function InventoryManagement() {
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}><Box size={14}/></div>
                           {item.name}
                         </td>
-                        <td className="p-4 font-black text-indigo-500">{formatCurrency(item.price, 'USD')}</td>
+                        <td className="p-4 font-black text-indigo-500">
+                          {/* DYNAMIC CURRENCY LOADED HERE */}
+                          {formatCurrency(item.price, workspaceCurrency)}
+                        </td>
                         <td className="p-4">
                           <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${item.stock_quantity > 10 ? (isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-700') : (isDarkMode ? 'bg-rose-500/10 text-rose-400' : 'bg-rose-50 text-rose-700')}`}>
                             {formatNumber(item.stock_quantity)} IN STOCK
@@ -270,7 +283,8 @@ export default function InventoryManagement() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold uppercase mb-1 opacity-70">Price</label>
+                    {/* DYNAMIC CURRENCY LABEL HERE */}
+                    <label className="block text-xs font-bold uppercase mb-1 opacity-70">Price ({workspaceCurrency})</label>
                     <input type="number" step="0.01" required value={formPrice} onChange={e => setFormPrice(e.target.value)} className={`w-full p-3 rounded-lg text-sm focus:outline-none border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} />
                   </div>
                   <div>
@@ -374,7 +388,11 @@ export default function InventoryManagement() {
                           <div><span className="block text-[9px] uppercase font-bold text-slate-500">Store</span><span className="text-sm font-semibold">{extractedReceipt.storeName || 'N/A'}</span></div>
                           <div><span className="block text-[9px] uppercase font-bold text-slate-500">Receipt No</span><span className="text-sm font-semibold">{extractedReceipt.receiptNo || 'N/A'}</span></div>
                           <div><span className="block text-[9px] uppercase font-bold text-slate-500">Date</span><span className="text-sm font-semibold">{extractedReceipt.date || 'N/A'}</span></div>
-                          <div><span className="block text-[9px] uppercase font-bold text-slate-500">Total</span><span className="text-sm font-black text-indigo-500">{formatCurrency(extractedReceipt.total, 'USD')}</span></div>
+                          <div>
+                            <span className="block text-[9px] uppercase font-bold text-slate-500">Total</span>
+                            {/* DYNAMIC CURRENCY LOADED HERE */}
+                            <span className="text-sm font-black text-indigo-500">{formatCurrency(extractedReceipt.total, workspaceCurrency)}</span>
+                          </div>
                         </div>
 
                         <h4 className="text-xs font-black uppercase text-indigo-500 mb-3 flex items-center gap-2"><Package size={14}/> Extracted Items ({extractedReceipt.items?.length || 0})</h4>
@@ -393,7 +411,8 @@ export default function InventoryManagement() {
                                 <tr key={idx} className="bg-white dark:bg-slate-900">
                                   <td className="p-3 font-semibold">{item.name}</td>
                                   <td className="p-3 font-mono">{formatNumber(item.quantity)}</td>
-                                  <td className="p-3 font-mono">{formatCurrency(item.unitPrice, 'USD')}</td>
+                                  {/* DYNAMIC CURRENCY LOADED HERE */}
+                                  <td className="p-3 font-mono">{formatCurrency(item.unitPrice, workspaceCurrency)}</td>
                                 </tr>
                               ))}
                             </tbody>

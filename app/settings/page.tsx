@@ -26,6 +26,8 @@ export default function EnhancedSettings() {
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [userEmail, setUserEmail] = useState('Loading...');
   const [userId, setUserId] = useState('');
+  
+  // Currency States
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [isSavingCurrency, setIsSavingCurrency] = useState(false);
   
@@ -62,11 +64,18 @@ export default function EnhancedSettings() {
     initializeSettings();
   }, []);
 
-  // Handle Currency Update
+  // SAFELY HANDLE CURRENCY SAVING
   const handleCurrencyChange = async (newCurrency: string) => {
     setCurrencyCode(newCurrency);
     setIsSavingCurrency(true);
-    await supabase.from('profiles').update({ currency_code: newCurrency }).eq('id', userId);
+    
+    const { error } = await supabase.from('profiles').update({ currency_code: newCurrency }).eq('id', userId);
+    
+    if (error) {
+      alert(`DATABASE ERROR: ${error.message}\n\nPlease run the SQL snippet in Supabase to add the currency_code column!`);
+      setCurrencyCode('USD'); // Revert UI if it fails
+    }
+    
     setTimeout(() => setIsSavingCurrency(false), 800); // Visual success feedback
   };
 

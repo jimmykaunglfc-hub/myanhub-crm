@@ -47,6 +47,8 @@ export default function OrdersPipeline() {
   const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
+  const [workspaceCurrency, setWorkspaceCurrency] = useState('USD');
+  
   const [orders, setOrders] = useState<Order[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +74,9 @@ export default function OrdersPipeline() {
       const { data: { session }, error } = await supabase.auth.getSession();
       if (error || !session) { router.replace('/login'); return; }
       setUserId(session.user.id);
+      
+      const { data: profile } = await supabase.from('profiles').select('currency_code').eq('id', session.user.id).single();
+      if (profile?.currency_code) setWorkspaceCurrency(profile.currency_code);
     };
     checkSession();
   }, [router]);
@@ -96,7 +101,7 @@ export default function OrdersPipeline() {
 
 
   // -------------------------------------------------------------
-  // AUTOMATED TRACKING NOTIFICATION ENGINE (Drag & Drop)
+  // AUTOMATED TRACKING NOTIFICATION ENGINE
   // -------------------------------------------------------------
   const sendOrderNotification = async (order: Order, newStatus: string) => {
     let notificationText = '';
@@ -157,12 +162,11 @@ export default function OrdersPipeline() {
   };
 
   // -------------------------------------------------------------
-  // DISPATCH CONTROLS (Now with automated notifications!)
+  // DISPATCH CONTROLS
   // -------------------------------------------------------------
   const handleAssignInternalDriver = async (orderId: string, driverId: string) => {
     await supabase.from('orders').update({ assigned_driver_id: driverId, delivery_state: 'assigned', is_external_delivery: false }).eq('id', orderId);
     
-    // Auto-Ping Customer about Assignment
     const targetOrder = orders.find(o => o.id === orderId);
     const assignedDriver = drivers.find(d => d.id === driverId);
     if (targetOrder && assignedDriver && userId) {
@@ -184,7 +188,6 @@ export default function OrdersPipeline() {
     if (!courierName) return alert("Please enter a courier name (e.g. DHL).");
     await supabase.from('orders').update({ is_external_delivery: true, courier_name: courierName, tracking_url: trackingUrl, delivery_state: 'assigned' }).eq('id', orderId);
     
-    // Auto-Ping Customer about External Dispatch
     const targetOrder = orders.find(o => o.id === orderId);
     if (targetOrder && userId) {
       const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been dispatched via ${courierName}.${trackingUrl ? ` Track your package here: ${trackingUrl}` : ''}`;
@@ -219,7 +222,6 @@ export default function OrdersPipeline() {
     setManageModalOpen(false); 
   };
 
-  // OPEN MANAGE MODAL
   const openManageModal = (order: Order) => {
     setEditingOrder(order);
     setEditPhone(order.contact_phone || '');
@@ -228,7 +230,6 @@ export default function OrdersPipeline() {
     setManageModalOpen(true);
   };
 
-  // SAVE ORDER DETAILS
   const handleSaveOrderDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingOrder) return;
@@ -243,7 +244,6 @@ export default function OrdersPipeline() {
     else { setManageModalOpen(false); }
   };
 
-  // PRINT PACKING SLIP
   const handlePrintSlip = (order: Order) => {
     const printContent = `
       <html>
@@ -278,7 +278,7 @@ export default function OrdersPipeline() {
               <h3>Order Details</h3>
               <p style="margin: 5px 0;"><strong>Status:</strong> <span style="text-transform: uppercase;">${order.status}</span></p>
               <p style="margin: 5px 0;"><strong>Payment Status:</strong> ${order.payment_status || 'Pending'}</p>
-              <p style="margin: 5px 0;"><strong>Total Value:</strong> ${formatCurrency(order.total_amount, 'USD')}</p>
+              <p style="margin: 5px 0;"><strong>Total Value:</strong> ${formatCurrency(order.total_amount, workspaceCurrency)}</p>
             </div>
           </div>
           ${order.internal_notes ? `<div class="notes-box"><h3 style="margin-top:0; font-size: 12px; color: #888; text-transform: uppercase;">Internal Fulfillment Remarks</h3><p style="margin:0; font-weight:bold; white-space: pre-wrap;">${order.internal_notes}</p></div>` : ''}
@@ -337,9 +337,9 @@ export default function OrdersPipeline() {
                           </div>
                           
                           <div className="space-y-1.5 mb-4">
-                            {/* APPLIED GLOBAL CURRENCY FORMATTER HERE */}
+                            {/* DYNAMIC CURRENCY APPLIED HERE */}
                             <div className={`text-lg font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
-                              {formatCurrency(order.total_amount, 'USD')}
+                              {formatCurrency(order.total_amount, workspaceCurrency)}
                             </div>
                             
                             <div className="flex items-center gap-2 text-xs mt-2">
