@@ -13,7 +13,7 @@ export function middleware(req: NextRequest) {
   const hostname = req.headers.get('host') || '';
 
   // 1. Route for the Super Admin Panel
-  if (hostname === 'sacrm.myanhub.com') {
+  if (hostname === 'saco.myanhub.com') {
     // If they go to the root of the sacrm domain, invisibly serve the admin panel
     if (url.pathname === '/') {
       return NextResponse.rewrite(new URL('/admin-panel', req.url));
@@ -21,6 +21,6 @@ export function middleware(req: NextRequest) {
   }
 
   // 2. Route for the Client CRM
-  // If they visit crm.myanhub.com, they will naturally be served the standard app routes
+  // If they visit co.myanhub.com, they will naturally be served the standard app routes
   return NextResponse.next();
 }
