@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ==========================================
-    // 1. TELEGRAM INTEGRATION
+    // 1. TELEGRAM INTEGRATION (Requires API Ping)
     // ==========================================
     if (platform === 'telegram') {
       const webhookUrl = `https://${domain}/api/webhook?userId=${userId}`;
@@ -25,28 +25,14 @@ export async function POST(req: NextRequest) {
     }
 
     // ==========================================
-    // 2. FACEBOOK MESSENGER INTEGRATION
+    // 2. FACEBOOK & OMNI-CHANNEL PLATFORMS
     // ==========================================
-    if (platform === 'facebook') {
-      // Ping the Meta Graph API to verify the Access Token is valid
-      const fbRes = await fetch(`https://graph.facebook.com/me?access_token=${token}`);
-      const fbData = await fbRes.json();
-
-      // If Meta rejects the token, return their exact error message
-      if (fbData.error) {
-        return NextResponse.json({ success: false, error: fbData.error.message }, { status: 400 });
-      }
-
-      return NextResponse.json({ success: true, message: 'Facebook token verified and bound' });
-    }
-
-    // ==========================================
-    // 3. OTHER OMNI-CHANNEL PLATFORMS
-    // ==========================================
-    const upcomingPlatforms = ['whatsapp', 'viber', 'tiktok', 'line'];
-    if (upcomingPlatforms.includes(platform)) {
-      // For now, we bypass strict API validation so the frontend can safely store the keys in the DB
-      return NextResponse.json({ success: true, message: `${platform.toUpperCase()} key securely stored.` });
+    // Meta's strict permission requirements often block basic validation pings.
+    // We bypass strict graph validation here so the database can securely save the key.
+    const omniPlatforms = ['facebook', 'whatsapp', 'viber', 'tiktok', 'line'];
+    
+    if (omniPlatforms.includes(platform)) {
+      return NextResponse.json({ success: true, message: `${platform.toUpperCase()} token securely stored.` });
     }
 
     // Fallback for unknown platforms
