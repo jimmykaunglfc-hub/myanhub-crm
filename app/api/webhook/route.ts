@@ -15,7 +15,6 @@ export async function GET(req: NextRequest) {
   const token = url.searchParams.get('hub.verify_token');
   const challenge = url.searchParams.get('hub.challenge');
 
-  // This is the secret password Facebook will ask for.
   const VERIFY_TOKEN = "myanhub_secure_webhook";
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
@@ -38,17 +37,32 @@ export async function POST(req: NextRequest) {
 
     const payload = await req.json();
 
-    // Unified Variables
     let text = '';
     let platform = '';
     let fallbackName = '';
     let socialLink = '';
     let externalId = '';
 
-    // --- FACEBOOK PAYLOAD PARSER ---
+    // --- FACEBOOK PAYLOAD PARSER (UPGRADED) ---
     if (payload.object === 'page' && payload.entry) {
-      const event = payload.entry[0].messaging[0];
-      if (!event.message || !event.message.text) return NextResponse.json({ success: true });
+      const entry = payload.entry[0];
+      
+      // CRITICAL FIX: Ignore background pings (delivered, read, etc.)
+      if (!entry.messaging || entry.messaging.length === 0) {
+        return NextResponse.json({ success: true });
+      }
+
+      const event = entry.messaging[0];
+
+      // CRITICAL FIX: Ignore messages sent by your own page (Echoes)
+      if (event.message?.is_echo) {
+        return NextResponse.json({ success: true });
+      }
+
+      // Ignore anything that isn't a text message (like image uploads for now)
+      if (!event.message || !event.message.text) {
+        return NextResponse.json({ success: true });
+      }
       
       platform = 'facebook';
       text = event.message.text;
