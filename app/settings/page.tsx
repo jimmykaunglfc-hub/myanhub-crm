@@ -7,7 +7,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Sliders, Info, MessageSquare, MessageCircle, ShoppingBag, 
-  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote, Bot
+  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote, Bot, Copy
 } from 'lucide-react';
 
 type ChannelType = 'facebook' | 'telegram' | 'viber' | 'tiktok' | 'whatsapp' | 'line';
@@ -26,10 +26,11 @@ export default function EnhancedSettings() {
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [userEmail, setUserEmail] = useState('Loading...');
   const [userId, setUserId] = useState('');
+  const [domainUrl, setDomainUrl] = useState('');
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [isSavingCurrency, setIsSavingCurrency] = useState(false);
   
-  // NEW: AI Auto-Pilot State
+  // AI Auto-Pilot State
   const [aiEnabled, setAiEnabled] = useState(false);
   
   // Integration States
@@ -38,6 +39,7 @@ export default function EnhancedSettings() {
   const [credentialKey, setCredentialKey] = useState('');
   const [channelStatus, setChannelStatus] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+  const [copiedField, setCopiedField] = useState('');
   
   // Security States
   const [newPassword, setNewPassword] = useState('');
@@ -45,6 +47,8 @@ export default function EnhancedSettings() {
 
   // 1. Fetch Session, Profile (Currency & AI), & Integrations
   useEffect(() => {
+    setDomainUrl(window.location.host); // Grab the current domain dynamically
+
     const initializeSettings = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -95,7 +99,7 @@ export default function EnhancedSettings() {
     setTimeout(() => setIsSavingCurrency(false), 800); 
   };
 
-  // NEW: Toggle AI Auto-Pilot function
+  // Toggle AI Auto-Pilot function
   const toggleAiPilot = async () => {
     const newState = !aiEnabled;
     setAiEnabled(newState);
@@ -106,9 +110,15 @@ export default function EnhancedSettings() {
       .eq('id', userId);
       
     if (error) {
-      alert(`AI UPDATE ERROR: ${error.message}\n\nDid you run the SQL command to add the ai_auto_respond column?`);
+      alert(`AI UPDATE ERROR: ${error.message}`);
       setAiEnabled(!newState); // revert on error
     }
+  };
+
+  const handleCopy = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(''), 2000);
   };
 
   const handleSaveChannelConfig = async (e: React.FormEvent) => {
@@ -116,11 +126,10 @@ export default function EnhancedSettings() {
     setChannelStatus('Authenticating API gates with platform...');
     
     try {
-      const currentDomain = window.location.host;
       const res = await fetch('/api/register-bot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: credentialKey, platform: activeChannel, domain: currentDomain, userId: userId })
+        body: JSON.stringify({ token: credentialKey, platform: activeChannel, domain: domainUrl, userId: userId })
       });
 
       const apiData = await res.json();
@@ -177,7 +186,7 @@ export default function EnhancedSettings() {
 
   const guidelines: Record<ChannelType, { title: string; steps: string[]; placeholder: string }> = {
     telegram: { title: "Telegram Bot API Integration Guide", steps: ["Open Telegram and search for the @BotFather manager node.", "Send the text command '/newbot' and assign a public identity configuration handle.", "Copy the generated cryptographic HTTP API Token string parameter.", "Paste the token values below to activate background listener webhooks instantly."], placeholder: "Enter Bot API Token (e.g., 7428941:AAH_x...)" },
-    facebook: { title: "Facebook Messenger Business Setup", steps: ["Navigate to developers.facebook.com and initialize a Meta Business App console.", "Add the 'Messenger' feature product bundle inside your navigation dashboard controls.", "Link your active commercial Page asset and generate a Permanent Page Access Token.", "Input your Access Token parameter key down below to stream inbound message webhooks."], placeholder: "Enter Meta Page Access Token String" },
+    facebook: { title: "Facebook Messenger Business Setup", steps: ["Navigate to developers.facebook.com and initialize a Meta Business App console.", "Add the 'Messenger' feature product bundle inside your navigation dashboard controls.", "Copy the exact Callback URL and Verify Token from the fields below and paste them into your Meta Webhooks dashboard.", "Input your Permanent Page Access Token down below to stream inbound message webhooks."], placeholder: "Enter Meta Page Access Token String" },
     viber: { title: "Viber Business Chat Integration", steps: ["Visit the official Viber Partner Console panel asset gateway.", "Select 'Create Bot Account', upload your brand assets and fill out workspace descriptors.", "Acquire your master application App Token key from the confirmation screen setup matrix.", "Bind your account parameters to the MyanHub ingestion node below."], placeholder: "Enter Viber App Token Key" },
     tiktok: { title: "TikTok Shop Multi-Tenant API Hub", steps: ["Sign in directly to your TikTok Shop Affiliate Developer Center portal.", "Authorize 'MyanHub Platform Connector' under cross-origin account configurations.", "Extract your unique App Key string along with your active Client Secret parameters.", "Paste your validation keys below to begin automatic inventory mapping streams."], placeholder: "Enter TikTok Shop Authorization App Key" },
     whatsapp: { title: "WhatsApp Cloud Business System Integration", steps: ["Go to your Meta Developer Matrix portal and choose your WhatsApp Business application node.", "Set up standard WhatsApp Business API access triggers inside your project hierarchy.", "Generate your permanent system access authorization token parameters.", "Submit the key below to pipeline customer communication channels safely."], placeholder: "Enter Meta WhatsApp Business Access Token" },
@@ -267,7 +276,7 @@ export default function EnhancedSettings() {
                 </div>
               </div>
 
-              {/* NEW BOX 4: AI Auto-Pilot */}
+              {/* Box 4: AI Auto-Pilot */}
               <div className={`p-5 rounded-xl flex flex-col justify-between transition-all border ${aiEnabled ? 'shadow-[0_0_15px_rgba(99,102,241,0.25)] border-indigo-500/50' : ''} ${isDarkMode ? 'bg-indigo-950/10' : 'bg-indigo-50/50'}`}>
                 <div className="flex justify-between items-start mb-3">
                   <div>
@@ -373,6 +382,39 @@ export default function EnhancedSettings() {
                         {guidelines[activeChannel].steps.map((step, idx) => <li key={idx} className="pl-2 leading-relaxed">{step}</li>)}
                       </ol>
                     </div>
+
+                    {/* NEW: DYNAMIC WEBHOOK GENERATOR (FACEBOOK ONLY) */}
+                    {activeChannel === 'facebook' && (
+                      <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-slate-950 border-indigo-500/30' : 'bg-indigo-50/50 border-indigo-200'}`}>
+                        <h5 className="text-xs font-bold uppercase tracking-wider mb-4 text-indigo-500 flex items-center gap-2">
+                          <CheckCircle2 size={14} /> Facebook Webhook Requirements
+                        </h5>
+                        
+                        <div className="space-y-4">
+                          <div>
+                            <label className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Callback URL</label>
+                            <div className="flex gap-2">
+                              <input readOnly value={`https://${domainUrl}/api/webhook?userId=${userId}`} className={`flex-1 px-3 py-2 text-xs font-mono rounded-lg border focus:outline-none ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-600'}`} />
+                              <button type="button" onClick={() => handleCopy(`https://${domainUrl}/api/webhook?userId=${userId}`, 'url')} className="px-4 py-2 flex items-center gap-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition active:scale-95">
+                                {copiedField === 'url' ? <CheckCircle2 size={14} /> : <Copy size={14} />} 
+                                {copiedField === 'url' ? 'Copied' : 'Copy'}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Verify Token</label>
+                            <div className="flex gap-2">
+                              <input readOnly value="myanhub_secure_webhook" className={`flex-1 px-3 py-2 text-xs font-mono rounded-lg border focus:outline-none ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-600'}`} />
+                              <button type="button" onClick={() => handleCopy("myanhub_secure_webhook", 'token')} className="px-4 py-2 flex items-center gap-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition active:scale-95">
+                                {copiedField === 'token' ? <CheckCircle2 size={14} /> : <Copy size={14} />} 
+                                {copiedField === 'token' ? 'Copied' : 'Copy'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     <form onSubmit={handleSaveChannelConfig} className="flex flex-col sm:flex-row gap-3 pt-2">
                       <div className="relative flex-1">
