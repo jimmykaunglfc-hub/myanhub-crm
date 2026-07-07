@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
 
     const payload = await req.json();
+    
+    // 🔥 THE X-RAY LOGGER: This will print exactly what Facebook sends us into Vercel Logs
+    console.log("🔥 INCOMING PAYLOAD:", JSON.stringify(payload, null, 2));
 
     let text = '';
     let platform = '';
@@ -47,14 +50,14 @@ export async function POST(req: NextRequest) {
     if (payload.object === 'page' && payload.entry) {
       const entry = payload.entry[0];
       
-      // CRITICAL FIX: Ignore background pings (delivered, read, etc.)
+      // Ignore background pings (delivered, read, etc.)
       if (!entry.messaging || entry.messaging.length === 0) {
         return NextResponse.json({ success: true });
       }
 
       const event = entry.messaging[0];
 
-      // CRITICAL FIX: Ignore messages sent by your own page (Echoes)
+      // Ignore messages sent by your own page (Echoes)
       if (event.message?.is_echo) {
         return NextResponse.json({ success: true });
       }
