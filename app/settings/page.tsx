@@ -47,7 +47,7 @@ export default function EnhancedSettings() {
 
   // 1. Fetch Session, Profile (Currency & AI), & Integrations
   useEffect(() => {
-    setDomainUrl(window.location.host); // Grab the current domain dynamically
+    setDomainUrl(window.location.host);
 
     const initializeSettings = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -55,7 +55,6 @@ export default function EnhancedSettings() {
         setUserEmail(user.email || '');
         setUserId(user.id);
         
-        // Fetch User Profile for Currency and AI Configuration
         const { data: profile } = await supabase
           .from('profiles')
           .select('currency_code, ai_auto_respond')
@@ -69,7 +68,6 @@ export default function EnhancedSettings() {
           setAiEnabled(profile.ai_auto_respond);
         }
 
-        // Fetch Active Integrations
         const { data: activeInts } = await supabase.from('workspace_integrations').select('*').eq('user_id', user.id);
         if (activeInts) setIntegrations(activeInts as Integration[]);
       }
@@ -99,7 +97,6 @@ export default function EnhancedSettings() {
     setTimeout(() => setIsSavingCurrency(false), 800); 
   };
 
-  // Toggle AI Auto-Pilot function
   const toggleAiPilot = async () => {
     const newState = !aiEnabled;
     setAiEnabled(newState);
@@ -111,7 +108,7 @@ export default function EnhancedSettings() {
       
     if (error) {
       alert(`AI UPDATE ERROR: ${error.message}`);
-      setAiEnabled(!newState); // revert on error
+      setAiEnabled(!newState); 
     }
   };
 
@@ -121,6 +118,22 @@ export default function EnhancedSettings() {
     setTimeout(() => setCopiedField(''), 2000);
   };
 
+  // 🔥 NEW: Klink-Style Facebook OAuth Trigger
+  const triggerKlinkStyleLogin = () => {
+    if (!process.env.NEXT_PUBLIC_FB_APP_ID) {
+      setChannelStatus('Error: Missing NEXT_PUBLIC_FB_APP_ID in environment variables.');
+      return;
+    }
+    const appId = process.env.NEXT_PUBLIC_FB_APP_ID;
+    const callbackUrl = encodeURIComponent(`${window.location.origin}/api/auth/facebook/callback`);
+    const scopes = 'pages_messaging,pages_read_engagement,pages_show_list,pages_manage_metadata';
+    const fbOAuthUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${appId}&redirect_uri=${callbackUrl}&scope=${scopes}&state=${userId}`;
+    
+    // Spawns the clean, centered popup window over your CRM
+    window.open(fbOAuthUrl, 'Facebook Login', 'width=650,height=700,top=100,left=100');
+  };
+
+  // Legacy manual setup for other channels
   const handleSaveChannelConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setChannelStatus('Authenticating API gates with platform...');
@@ -184,13 +197,12 @@ export default function EnhancedSettings() {
     return `${token.slice(0, 4)}••••••••••••${token.slice(-4)}`;
   };
 
-  const guidelines: Record<ChannelType, { title: string; steps: string[]; placeholder: string }> = {
-    telegram: { title: "Telegram Bot API Integration Guide", steps: ["Open Telegram and search for the @BotFather manager node.", "Send the text command '/newbot' and assign a public identity configuration handle.", "Copy the generated cryptographic HTTP API Token string parameter.", "Paste the token values below to activate background listener webhooks instantly."], placeholder: "Enter Bot API Token (e.g., 7428941:AAH_x...)" },
-    facebook: { title: "Facebook Messenger Business Setup", steps: ["Navigate to developers.facebook.com and initialize a Meta Business App console.", "Add the 'Messenger' feature product bundle inside your navigation dashboard controls.", "Copy the exact Callback URL and Verify Token from the fields below and paste them into your Meta Webhooks dashboard.", "Input your Permanent Page Access Token down below to stream inbound message webhooks."], placeholder: "Enter Meta Page Access Token String" },
+  const guidelines: Record<string, { title: string; steps: string[]; placeholder: string }> = {
+    telegram: { title: "Telegram Bot API Integration", steps: ["Open Telegram and search for the @BotFather manager node.", "Send the text command '/newbot' and assign a public identity configuration handle.", "Copy the generated cryptographic HTTP API Token string parameter.", "Paste the token values below to activate background listener webhooks instantly."], placeholder: "Enter Bot API Token (e.g., 7428941:AAH_x...)" },
     viber: { title: "Viber Business Chat Integration", steps: ["Visit the official Viber Partner Console panel asset gateway.", "Select 'Create Bot Account', upload your brand assets and fill out workspace descriptors.", "Acquire your master application App Token key from the confirmation screen setup matrix.", "Bind your account parameters to the MyanHub ingestion node below."], placeholder: "Enter Viber App Token Key" },
-    tiktok: { title: "TikTok Shop Multi-Tenant API Hub", steps: ["Sign in directly to your TikTok Shop Affiliate Developer Center portal.", "Authorize 'MyanHub Platform Connector' under cross-origin account configurations.", "Extract your unique App Key string along with your active Client Secret parameters.", "Paste your validation keys below to begin automatic inventory mapping streams."], placeholder: "Enter TikTok Shop Authorization App Key" },
-    whatsapp: { title: "WhatsApp Cloud Business System Integration", steps: ["Go to your Meta Developer Matrix portal and choose your WhatsApp Business application node.", "Set up standard WhatsApp Business API access triggers inside your project hierarchy.", "Generate your permanent system access authorization token parameters.", "Submit the key below to pipeline customer communication channels safely."], placeholder: "Enter Meta WhatsApp Business Access Token" },
-    line: { title: "Line Developers Messaging Network Connect", steps: ["Log into your active Line Developers Business account console pipeline.", "Create a brand-new Messaging API Provider channel context wrapper.", "Issue a permanent Long-Lived Channel Access Token string inside configuration settings.", "Feed the token key matrix into your MyanHub receiver down below."], placeholder: "Enter Line Channel Access Token String" }
+    tiktok: { title: "TikTok Shop Multi-Tenant API", steps: ["Sign in directly to your TikTok Shop Affiliate Developer Center portal.", "Authorize 'MyanHub Platform Connector' under cross-origin account configurations.", "Extract your unique App Key string along with your active Client Secret parameters.", "Paste your validation keys below to begin automatic inventory mapping streams."], placeholder: "Enter TikTok Shop Authorization App Key" },
+    whatsapp: { title: "WhatsApp Cloud API Integration", steps: ["Go to your Meta Developer Matrix portal and choose your WhatsApp Business application node.", "Set up standard WhatsApp Business API access triggers inside your project hierarchy.", "Generate your permanent system access authorization token parameters.", "Submit the key below to pipeline customer communication channels safely."], placeholder: "Enter Meta WhatsApp Business Access Token" },
+    line: { title: "Line Developers Network Connect", steps: ["Log into your active Line Developers Business account console pipeline.", "Create a brand-new Messaging API Provider channel context wrapper.", "Issue a permanent Long-Lived Channel Access Token string inside configuration settings.", "Feed the token key matrix into your MyanHub receiver down below."], placeholder: "Enter Line Channel Access Token String" }
   };
 
   const activeIntegration = activeChannel ? integrations.find(i => i.channel === activeChannel) : null;
@@ -307,7 +319,7 @@ export default function EnhancedSettings() {
             
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4">
               {[
-                { id: 'facebook', name: 'Messenger', icon: <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg> },
+                { id: 'facebook', name: 'Messenger', icon: <svg className="w-6 h-6 text-[#1877F2]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg> },
                 { id: 'telegram', name: 'Telegram', icon: <MessageSquare size={24} className="text-sky-500" /> },
                 { id: 'whatsapp', name: 'WhatsApp', icon: <MessageCircle size={24} className="text-emerald-500" /> },
                 { id: 'tiktok', name: 'TikTok Shop', icon: <ShoppingBag size={24} className={isDarkMode ? 'text-white' : 'text-black'} /> },
@@ -334,17 +346,17 @@ export default function EnhancedSettings() {
             </div>
 
             {/* CONNECTION MANAGER VIEW */}
-            {activeChannel && guidelines[activeChannel] && (
+            {activeChannel && (
               <div className={`mt-6 p-6 border rounded-xl animate-fade-in transition-colors ${isDarkMode ? 'bg-slate-950/80 border-indigo-500/30' : 'bg-indigo-50/50 border-indigo-100'}`}>
                 
+                {/* 1. ALREADY CONNECTED STATE */}
                 {activeIntegration && !isEditing ? (
-                  /* ALREADY CONNECTED STATE */
                   <div className="space-y-5">
                     <div className="flex items-center justify-between border-b pb-4 border-indigo-500/20">
                       <div className="flex items-center gap-3 text-emerald-600 dark:text-emerald-400">
                         <CheckCircle2 size={24} />
                         <div>
-                          <h4 className="text-sm font-bold">{guidelines[activeChannel].title} Active</h4>
+                          <h4 className="text-sm font-bold">{activeChannel === 'facebook' ? 'Facebook Integration' : guidelines[activeChannel].title} Active</h4>
                           <p className="text-xs opacity-80 mt-0.5">Webhook is currently routing inbound data streams.</p>
                         </div>
                       </div>
@@ -358,7 +370,7 @@ export default function EnhancedSettings() {
                       
                       <div className="flex items-center gap-3 w-full sm:w-auto">
                         <button onClick={() => setIsEditing(true)} className={`flex-1 sm:flex-none px-5 py-2.5 rounded-lg text-sm font-bold transition border ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700' : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'}`}>
-                          Update Token
+                          Update Access
                         </button>
                         <button onClick={() => handleDisconnect(activeIntegration.id, activeChannel)} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/20">
                           <Trash2 size={16} /> Disconnect
@@ -367,69 +379,64 @@ export default function EnhancedSettings() {
                     </div>
                   </div>
                 ) : (
-                  /* NEW CONNECTION OR EDITING STATE */
+                  /* 2. NEW CONNECTION OR EDITING STATE */
                   <div className="space-y-5">
-                    <div className="flex items-start gap-3 text-indigo-600">
-                      <Info size={20} className="mt-0.5 flex-shrink-0" />
-                      <div>
-                        <h4 className={`text-sm font-bold ${isDarkMode ? 'text-indigo-300' : 'text-indigo-900'}`}>{isEditing ? 'Update Configuration' : guidelines[activeChannel].title}</h4>
-                        <p className={`text-xs mt-1 leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Follow the precise pipeline rules below to clear authentication layers manually.</p>
-                      </div>
-                    </div>
                     
-                    <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-                      <ol className={`space-y-3 pl-5 list-decimal text-sm font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                        {guidelines[activeChannel].steps.map((step, idx) => <li key={idx} className="pl-2 leading-relaxed">{step}</li>)}
-                      </ol>
-                    </div>
-
-                    {/* NEW: DYNAMIC WEBHOOK GENERATOR (FACEBOOK ONLY) */}
-                    {activeChannel === 'facebook' && (
-                      <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-slate-950 border-indigo-500/30' : 'bg-indigo-50/50 border-indigo-200'}`}>
-                        <h5 className="text-xs font-bold uppercase tracking-wider mb-4 text-indigo-500 flex items-center gap-2">
-                          <CheckCircle2 size={14} /> Facebook Webhook Requirements
-                        </h5>
-                        
-                        <div className="space-y-4">
-                          <div>
-                            <label className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Callback URL</label>
-                            <div className="flex gap-2">
-                              <input readOnly value={`https://${domainUrl}/api/webhook?userId=${userId}`} className={`flex-1 px-3 py-2 text-xs font-mono rounded-lg border focus:outline-none ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-600'}`} />
-                              <button type="button" onClick={() => handleCopy(`https://${domainUrl}/api/webhook?userId=${userId}`, 'url')} className="px-4 py-2 flex items-center gap-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition active:scale-95">
-                                {copiedField === 'url' ? <CheckCircle2 size={14} /> : <Copy size={14} />} 
-                                {copiedField === 'url' ? 'Copied' : 'Copy'}
-                              </button>
-                            </div>
+                    {/* FACEBOOK OAUTH WIDGET (REPLACES OLD TEXT BOXES) */}
+                    {activeChannel === 'facebook' ? (
+                      <div className={`border rounded-xl p-6 max-w-md ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="bg-[#1877F2] p-2.5 rounded-lg text-white">
+                            <svg className="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
                           </div>
-
                           <div>
-                            <label className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Verify Token</label>
-                            <div className="flex gap-2">
-                              <input readOnly value="myanhub_secure_webhook" className={`flex-1 px-3 py-2 text-xs font-mono rounded-lg border focus:outline-none ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-600'}`} />
-                              <button type="button" onClick={() => handleCopy("myanhub_secure_webhook", 'token')} className="px-4 py-2 flex items-center gap-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition active:scale-95">
-                                {copiedField === 'token' ? <CheckCircle2 size={14} /> : <Copy size={14} />} 
-                                {copiedField === 'token' ? 'Copied' : 'Copy'}
-                              </button>
-                            </div>
+                            <h4 className={`font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Messenger Integration</h4>
+                            <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Connect your Facebook business account.</p>
                           </div>
                         </div>
-                      </div>
-                    )}
-
-                    <form onSubmit={handleSaveChannelConfig} className="flex flex-col sm:flex-row gap-3 pt-2">
-                      <div className="relative flex-1">
-                        <KeyRound size={16} className={`absolute left-4 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                        <input type="text" value={credentialKey} onChange={e => setCredentialKey(e.target.value)} required placeholder={guidelines[activeChannel].placeholder} className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all border ${isDarkMode ? 'bg-slate-900 border-slate-700 text-white placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'}`} />
-                      </div>
-                      <div className="flex gap-2 w-full sm:w-auto">
-                        {isEditing && (
-                          <button type="button" onClick={() => setIsEditing(false)} className={`flex-1 sm:flex-none px-5 py-3 rounded-xl text-sm font-bold border transition ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'}`}>Cancel</button>
-                        )}
-                        <button type="submit" className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-8 py-3 rounded-xl transition-all shadow-md whitespace-nowrap active:scale-95">
-                          {isEditing ? 'Save Update' : 'Connect Integration'}
+                        <button
+                          onClick={triggerKlinkStyleLogin}
+                          className="w-full bg-[#1877F2] hover:bg-[#166FE5] text-white font-medium py-3 px-4 rounded-xl transition duration-200 shadow-sm flex items-center justify-center gap-2 active:scale-95"
+                        >
+                          Login to Facebook
                         </button>
+                        {isEditing && (
+                          <button onClick={() => setIsEditing(false)} className={`mt-3 w-full py-2.5 rounded-xl text-sm font-bold transition border ${isDarkMode ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'}`}>Cancel</button>
+                        )}
                       </div>
-                    </form>
+                    ) : (
+                      /* LEGACY MANUAL SETUP WIDGET (TELEGRAM, VIBER, ETC.) */
+                      <>
+                        <div className="flex items-start gap-3 text-indigo-600">
+                          <Info size={20} className="mt-0.5 flex-shrink-0" />
+                          <div>
+                            <h4 className={`text-sm font-bold ${isDarkMode ? 'text-indigo-300' : 'text-indigo-900'}`}>{isEditing ? 'Update Configuration' : guidelines[activeChannel].title}</h4>
+                            <p className={`text-xs mt-1 leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Follow the precise pipeline rules below to clear authentication layers manually.</p>
+                          </div>
+                        </div>
+                        
+                        <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                          <ol className={`space-y-3 pl-5 list-decimal text-sm font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                            {guidelines[activeChannel].steps.map((step, idx) => <li key={idx} className="pl-2 leading-relaxed">{step}</li>)}
+                          </ol>
+                        </div>
+
+                        <form onSubmit={handleSaveChannelConfig} className="flex flex-col sm:flex-row gap-3 pt-2">
+                          <div className="relative flex-1">
+                            <KeyRound size={16} className={`absolute left-4 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                            <input type="text" value={credentialKey} onChange={e => setCredentialKey(e.target.value)} required placeholder={guidelines[activeChannel].placeholder} className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all border ${isDarkMode ? 'bg-slate-900 border-slate-700 text-white placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'}`} />
+                          </div>
+                          <div className="flex gap-2 w-full sm:w-auto">
+                            {isEditing && (
+                              <button type="button" onClick={() => setIsEditing(false)} className={`flex-1 sm:flex-none px-5 py-3 rounded-xl text-sm font-bold border transition ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'}`}>Cancel</button>
+                            )}
+                            <button type="submit" className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-8 py-3 rounded-xl transition-all shadow-md whitespace-nowrap active:scale-95">
+                              {isEditing ? 'Save Update' : 'Connect Integration'}
+                            </button>
+                          </div>
+                        </form>
+                      </>
+                    )}
                   </div>
                 )}
 
