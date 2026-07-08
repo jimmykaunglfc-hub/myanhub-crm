@@ -33,11 +33,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const userId = url.searchParams.get('userId');
+    let userId = url.searchParams.get('userId'); // Might be null for Facebook
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${url.protocol}//${url.host}`;
 
-    if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
-
+    // 🚀 READ PAYLOAD FIRST (Before rejecting missing userIds)
     const payload = await req.json();
 
     // 🔥 THE X-RAY LOGGER
@@ -52,9 +51,36 @@ export async function POST(req: NextRequest) {
     // --- FACEBOOK PAYLOAD PARSER ---
     if (payload.object === 'page' && payload.entry) {
       const entry = payload.entry[0];
+      const pageId = entry.id;
       
+      // 🚀 SMART ROUTING: Map the Facebook Page ID to the MyanHub Workspace User
+      if (!userId && pageId) {
+        const { data: activeIntegration } = await supabase
+          .from('workspace_integrations')
+          .select('user_id')
+          .eq('channel', 'facebook')
+          .eq('external_account_id', pageId)
+          .limit(1)
+          .single();
+          
+        if (activeIntegration) {
+          userId = activeIntegration.user_id;
+        } else {
+          // Fallback just in case external_account_id is missing
+          const { data: fallbackIntegration } = await supabase
+            .from('workspace_integrations')
+            .select('user_id')
+            .eq('channel', 'facebook')
+            .limit(1)
+            .single();
+          if (fallbackIntegration) userId = fallbackIntegration.user_id;
+        }
+      }
+
       if (!entry.messaging || entry.messaging.length === 0) return NextResponse.json({ success: true });
       const event = entry.messaging[0];
+      
+      // Ignore messages sent by the page itself (echoes)
       if (event.message?.is_echo) return NextResponse.json({ success: true });
       if (!event.message || !event.message.text) return NextResponse.json({ success: true });
       
@@ -66,30 +92,33 @@ export async function POST(req: NextRequest) {
       fallbackName = `FB User #${externalId.slice(-5)}`;
       socialLink = `https://facebook.com/${externalId}`;
 
-      try {
-        const { data: integration } = await supabase
-          .from('workspace_integrations')
-          .select('token')
-          .eq('user_id', userId)
-          .eq('channel', 'facebook')
-          .single();
+      // Try to fetch real name if we successfully mapped the userId
+      if (userId) {
+        try {
+          const { data: integration } = await supabase
+            .from('workspace_integrations')
+            .select('token')
+            .eq('user_id', userId)
+            .eq('channel', 'facebook')
+            .single();
 
-        if (integration?.token) {
-          const fbProfileRes = await fetch(`https://graph.facebook.com/v20.0/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
-          
-          if (fbProfileRes.ok) {
-            const fbProfile = await fbProfileRes.json();
-            if (fbProfile.first_name) {
-              fallbackName = `${fbProfile.first_name} ${fbProfile.last_name || ''}`.trim();
-              console.log("🔥 SUCCESS: Extracted Facebook Name:", fallbackName);
+          if (integration?.token) {
+            const fbProfileRes = await fetch(`https://graph.facebook.com/v20.0/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
+            
+            if (fbProfileRes.ok) {
+              const fbProfile = await fbProfileRes.json();
+              if (fbProfile.first_name) {
+                fallbackName = `${fbProfile.first_name} ${fbProfile.last_name || ''}`.trim();
+                console.log("🔥 SUCCESS: Extracted Facebook Name:", fallbackName);
+              }
+            } else {
+              const errText = await fbProfileRes.text();
+              console.error("🔥 META GRAPH API REJECTION:", errText);
             }
-          } else {
-            const errText = await fbProfileRes.text();
-            console.error("🔥 META GRAPH API REJECTION:", errText);
           }
+        } catch (e) {
+          console.error("🔥 Network error trying to reach Meta:", e);
         }
-      } catch (e) {
-        console.error("🔥 Network error trying to reach Meta:", e);
       }
     } 
     // --- TELEGRAM PAYLOAD PARSER ---
@@ -103,6 +132,12 @@ export async function POST(req: NextRequest) {
     // --- IGNORE UNKNOWN FORMATS ---
     else {
       return NextResponse.json({ success: true });
+    }
+
+    // 🚀 SECURITY CHECK: Now we reject if we STILL don't have a userId after smart routing
+    if (!userId) {
+      console.log("❌ REJECTED: Could not map incoming payload to any MyanHub userId.");
+      return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
     }
 
     let customerId = '';
