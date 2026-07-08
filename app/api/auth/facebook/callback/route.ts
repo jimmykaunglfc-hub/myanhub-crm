@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// 🔥 THIS FORCES NEXT.JS TO RUN THIS CODE LIVE INSTEAD OF USING CACHED DATA
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -9,50 +8,74 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get('code');
-  const userId = searchParams.get('state'); // Tracks which MyanHub client is logging in
+  const userId = searchParams.get('state');
 
   if (!code || !userId) {
     return NextResponse.json({ error: 'Authorization canceled' }, { status: 400 });
   }
 
   try {
-    // Ensure no trailing slash breaks the exact match validation
-    const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/auth/facebook/callback`;
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL!;
+    const redirectUri = `${siteUrl}/api/auth/facebook/callback`;
     
-    // 1. Swap the temporary social login code for a token
+    // 1. Swap the code for an access token
     const res = await fetch(
       `https://graph.facebook.com/v20.0/oauth/access_token?client_id=${process.env.FB_CLIENT_ID}&redirect_uri=${redirectUri}&client_secret=${process.env.FB_CLIENT_SECRET}&code=${code}`
     );
     const data = await res.json();
-    
-    // X-RAY LAYER 1: If token swap failed, show exactly why
-    if (data.error) {
-      return NextResponse.json({ error: 'Token Exchange Failed', details: data.error });
-    }
+    if (data.error) return NextResponse.json({ error: 'Token Exchange Failed', details: data.error });
 
     const userAccessToken = data.access_token;
 
-    // 2. Automatically grab their page profile details
+    // 2. Grab the authorized pages
     const accountsRes = await fetch(`https://graph.facebook.com/v20.0/me/accounts?access_token=${userAccessToken}`);
     const accountsData = await accountsRes.json();
-    
-    // X-RAY LAYER 2: If account fetch failed, show exactly why
-    if (accountsData.error) {
-      return NextResponse.json({ error: 'Page Fetch Failed', details: accountsData.error });
-    }
+    if (accountsData.error) return NextResponse.json({ error: 'Page Fetch Failed', details: accountsData.error });
 
     const authorizedPage = accountsData.data?.[0]; 
 
     if (authorizedPage) {
-      // 3. Save the page access token securely into your Supabase integrations table
-      await supabase.from('workspace_integrations').upsert({
-        user_id: userId,
-        channel: 'facebook',
-        token: authorizedPage.access_token,
-        external_account_id: authorizedPage.id
-      });
+      const pageToken = authorizedPage.access_token;
+      
+      // 3. TRIGGER YOUR WEBHOOK REGISTRATION (Replaces your frontend fetch)
+      try {
+        const domainUrl = new URL(siteUrl).host; // e.g., co.myanhub.com
+        await fetch(`${siteUrl}/api/register-bot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: pageToken, platform: 'facebook', domain: domainUrl, userId: userId })
+        });
+      } catch (err) {
+        console.error("Register bot failed silently:", err);
+      }
 
-      // 4. Force the popup to close itself and instantly reload your CRM dashboard
+      // 4. SAVE TO SUPABASE (Strictly matching your schema)
+      // Check if it already exists first
+      const { data: existingRow } = await supabase
+        .from('workspace_integrations')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('channel', 'facebook')
+        .single();
+
+      let dbError;
+      if (existingRow) {
+        const updateRes = await supabase.from('workspace_integrations')
+          .update({ token: pageToken, status: 'active' })
+          .eq('id', existingRow.id);
+        dbError = updateRes.error;
+      } else {
+        const insertRes = await supabase.from('workspace_integrations')
+          .insert({ user_id: userId, channel: 'facebook', token: pageToken, status: 'active' });
+        dbError = insertRes.error;
+      }
+
+      // X-RAY LAYER: Check if Supabase rejected the save
+      if (dbError) {
+        return NextResponse.json({ error: 'Supabase Save Failed', details: dbError });
+      }
+
+      // 5. Success! Reload the CRM window
       return new NextResponse(`
         <script>
           window.opener.location.reload();
@@ -61,16 +84,9 @@ export async function GET(req: Request) {
       `, { headers: { 'Content-Type': 'text/html' } });
     }
 
-    // X-RAY LAYER 3: Show exactly what Facebook sent back if the page list is empty
-    return NextResponse.json({ 
-      error: 'No associated pages authorized', 
-      meta_response: accountsData 
-    });
+    return NextResponse.json({ error: 'No associated pages authorized', meta_response: accountsData });
 
   } catch (e: any) {
-    return NextResponse.json({ 
-      error: 'Handshake connection failed', 
-      message: e.message 
-    }, { status: 500 });
+    return NextResponse.json({ error: 'Handshake connection failed', message: e.message }, { status: 500 });
   }
 }
