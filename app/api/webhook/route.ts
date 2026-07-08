@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
     const payload = await req.json();
     
-    // 🔥 THE X-RAY LOGGER: This will print exactly what Facebook sends us into Vercel Logs
+    // 🔥 THE X-RAY LOGGER
     console.log("🔥 INCOMING PAYLOAD:", JSON.stringify(payload, null, 2));
 
     let text = '';
@@ -46,32 +46,42 @@ export async function POST(req: NextRequest) {
     let socialLink = '';
     let externalId = '';
 
-    // --- FACEBOOK PAYLOAD PARSER (UPGRADED) ---
+    // --- FACEBOOK PAYLOAD PARSER ---
     if (payload.object === 'page' && payload.entry) {
       const entry = payload.entry[0];
       
-      // Ignore background pings (delivered, read, etc.)
-      if (!entry.messaging || entry.messaging.length === 0) {
-        return NextResponse.json({ success: true });
-      }
-
+      if (!entry.messaging || entry.messaging.length === 0) return NextResponse.json({ success: true });
       const event = entry.messaging[0];
-
-      // Ignore messages sent by your own page (Echoes)
-      if (event.message?.is_echo) {
-        return NextResponse.json({ success: true });
-      }
-
-      // Ignore anything that isn't a text message (like image uploads for now)
-      if (!event.message || !event.message.text) {
-        return NextResponse.json({ success: true });
-      }
+      if (event.message?.is_echo) return NextResponse.json({ success: true });
+      if (!event.message || !event.message.text) return NextResponse.json({ success: true });
       
       platform = 'facebook';
       text = event.message.text;
       externalId = event.sender.id;
-      fallbackName = 'Facebook Lead';
+      fallbackName = 'Facebook Lead'; // Default fallback
       socialLink = `https://facebook.com/${externalId}`;
+
+      // 🔥 THE FIX: Ask Facebook Graph API for the user's real name!
+      try {
+        const { data: integration } = await supabase
+          .from('workspace_integrations')
+          .select('token')
+          .eq('user_id', userId)
+          .eq('channel', 'facebook')
+          .single();
+
+        if (integration?.token) {
+          const fbProfileRes = await fetch(`https://graph.facebook.com/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
+          if (fbProfileRes.ok) {
+            const fbProfile = await fbProfileRes.json();
+            if (fbProfile.first_name) {
+              fallbackName = `${fbProfile.first_name} ${fbProfile.last_name || ''}`.trim();
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch FB profile name:", e);
+      }
     } 
     // --- TELEGRAM PAYLOAD PARSER ---
     else if (payload.message && payload.message.text) {
@@ -88,11 +98,25 @@ export async function POST(req: NextRequest) {
 
     let customerId = '';
 
-    // 1. Identify or Create Customer
-    const { data: existingCustomer } = await supabase.from('customers').select('id').eq('name', fallbackName).eq('platform', platform).eq('user_id', userId).limit(1).single();
+    // 1. Identify or Create Customer (Upgraded to search by PSID instead of Name)
+    const { data: existingCustomer } = await supabase
+      .from('customers')
+      .select('id, name')
+      .eq('platform', platform)
+      .eq('social_profile_link', socialLink)
+      .eq('user_id', userId)
+      .limit(1)
+      .single();
+
     if (existingCustomer) {
       customerId = existingCustomer.id;
-      await supabase.from('customers').update({ social_profile_link: socialLink }).eq('id', customerId);
+      
+      // If we previously saved them as "Facebook Lead" but now have a real name, overwrite it!
+      if (existingCustomer.name === 'Facebook Lead' && fallbackName !== 'Facebook Lead') {
+        await supabase.from('customers').update({ name: fallbackName }).eq('id', customerId);
+      } else {
+        await supabase.from('customers').update({ social_profile_link: socialLink }).eq('id', customerId);
+      }
     } else {
       const { data: newCustomer } = await supabase.from('customers').insert({ name: fallbackName, platform: platform, user_id: userId, social_profile_link: socialLink }).select().single();
       if (newCustomer) customerId = newCustomer.id;
