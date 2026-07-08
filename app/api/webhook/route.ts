@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
 
     const payload = await req.json();
-    
+
     // 🔥 THE X-RAY LOGGER
     console.log("🔥 INCOMING PAYLOAD:", JSON.stringify(payload, null, 2));
 
@@ -58,10 +58,10 @@ export async function POST(req: NextRequest) {
       platform = 'facebook';
       text = event.message.text;
       externalId = event.sender.id;
-      fallbackName = 'Facebook Lead'; // Default fallback
+      fallbackName = 'Facebook Lead';
       socialLink = `https://facebook.com/${externalId}`;
 
-      // 🔥 THE FIX: Ask Facebook Graph API for the user's real name!
+      // 🔥 DIAGNOSTIC FIX: Explicitly target v19.0 and log Meta's exact rejection reasons
       try {
         const { data: integration } = await supabase
           .from('workspace_integrations')
@@ -71,16 +71,22 @@ export async function POST(req: NextRequest) {
           .single();
 
         if (integration?.token) {
-          const fbProfileRes = await fetch(`https://graph.facebook.com/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
+          const fbProfileRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
+          
           if (fbProfileRes.ok) {
             const fbProfile = await fbProfileRes.json();
             if (fbProfile.first_name) {
               fallbackName = `${fbProfile.first_name} ${fbProfile.last_name || ''}`.trim();
+              console.log("🔥 SUCCESS: Extracted Facebook Name:", fallbackName);
             }
+          } else {
+            // If Facebook rejects it, print their exact error message!
+            const errText = await fbProfileRes.text();
+            console.error("🔥 META GRAPH API REJECTION:", errText);
           }
         }
       } catch (e) {
-        console.error("Failed to fetch FB profile name:", e);
+        console.error("🔥 Network error trying to reach Meta:", e);
       }
     } 
     // --- TELEGRAM PAYLOAD PARSER ---
@@ -98,7 +104,7 @@ export async function POST(req: NextRequest) {
 
     let customerId = '';
 
-    // 1. Identify or Create Customer (Upgraded to search by PSID instead of Name)
+    // 1. Identify or Create Customer
     const { data: existingCustomer } = await supabase
       .from('customers')
       .select('id, name')
@@ -111,9 +117,9 @@ export async function POST(req: NextRequest) {
     if (existingCustomer) {
       customerId = existingCustomer.id;
       
-      // If we previously saved them as "Facebook Lead" but now have a real name, overwrite it!
+      // Update the name if we finally bypassed the Facebook lock
       if (existingCustomer.name === 'Facebook Lead' && fallbackName !== 'Facebook Lead') {
-        await supabase.from('customers').update({ name: fallbackName }).eq('id', customerId);
+        await supabase.from('customers').update({ name: fallbackName, social_profile_link: socialLink }).eq('id', customerId);
       } else {
         await supabase.from('customers').update({ social_profile_link: socialLink }).eq('id', customerId);
       }
@@ -133,10 +139,7 @@ export async function POST(req: NextRequest) {
     const { data: profile } = await supabase.from('profiles').select('ai_auto_respond, currency_code').eq('id', userId).single();
     
     if (profile?.ai_auto_respond && customerId) {
-      
-      if (!process.env.GEMINI_API_KEY) {
-        return NextResponse.json({ success: true });
-      }
+      if (!process.env.GEMINI_API_KEY) return NextResponse.json({ success: true });
 
       const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', userId);
       const stockContext = inventory?.map(i => `- ${i.name} (Stock: ${i.stock_quantity}, Price: ${i.price} ${profile.currency_code})`).join('\n') || 'No items available.';
@@ -180,15 +183,9 @@ export async function POST(req: NextRequest) {
               const totalAmount = targetItem.price * orderData.qty;
               
               const { error: orderError } = await supabase.from('orders').insert({
-                customer_id: customerId, 
-                user_id: userId, 
-                order_id_string: orderIdStr,
-                total_amount: totalAmount, 
-                status: 'pending', 
-                delivery_state: 'unassigned',
-                payment_status: 'Pending',
-                contact_phone: orderData.phone,
-                delivery_address: orderData.address, 
+                customer_id: customerId, user_id: userId, order_id_string: orderIdStr,
+                total_amount: totalAmount, status: 'pending', delivery_state: 'unassigned', payment_status: 'Pending',
+                contact_phone: orderData.phone, delivery_address: orderData.address, 
                 cart_items: [{ product: targetItem, quantity: orderData.qty }]
               });
 
@@ -197,28 +194,14 @@ export async function POST(req: NextRequest) {
               }
 
               const receiptText = `🤖 [AI Auto-Billed]\n🎉 AI Order Confirmed!\n\nOrder ID: ${orderIdStr}\nItem: ${orderData.qty}x ${targetItem.name}\nTotal: ${totalAmount} ${profile.currency_code}\n\nOur team will dispatch this shortly!`;
-              
-              try {
-                await fetch(`${baseUrl}/api/send-message`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ customerId, text: receiptText, userId })
-                });
-              } catch (e) {}
-              
+              try { await fetch(`${baseUrl}/api/send-message`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, text: receiptText, userId }) }); } catch (e) {}
               return NextResponse.json({ success: true });
             }
           } catch (e) { console.error("AI JSON parsing failed", e); }
         }
 
         const friendlyReply = rawAiReply.replace(/__ORDER__[\s\S]*/g, '').trim();
-        
-        try {
-          await fetch(`${baseUrl}/api/send-message`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customerId, text: `🤖 ${friendlyReply}`, userId })
-          });
-        } catch (e) {}
-
+        try { await fetch(`${baseUrl}/api/send-message`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, text: `🤖 ${friendlyReply}`, userId }) }); } catch (e) {}
       }
     }
 
