@@ -36,6 +36,19 @@ export async function GET(req: Request) {
 
     if (authorizedPage) {
       const pageToken = authorizedPage.access_token;
+      const pageId = authorizedPage.id;
+      
+      // 🔥 NEW: Tell Meta to route messages for this specific page to your App
+      try {
+        await fetch(`https://graph.facebook.com/v20.0/${pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks&access_token=${pageToken}`, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error("Failed to subscribe webhook to page:", err);
+      }
+      
+      // 3. TRIGGER YOUR WEBHOOK REGISTRATION (Replaces your frontend fetch)
+      // ... (keep the rest of your existing code below this)
       
       // 3. TRIGGER YOUR WEBHOOK REGISTRATION (Replaces your frontend fetch)
       try {
