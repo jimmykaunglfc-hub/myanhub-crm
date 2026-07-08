@@ -8,19 +8,36 @@ export async function GET(req: Request) {
   const code = searchParams.get('code');
   const userId = searchParams.get('state'); // Tracks which MyanHub client is logging in
 
-  if (!code || !userId) return NextResponse.json({ error: 'Authorization canceled' }, { status: 400 });
+  if (!code || !userId) {
+    return NextResponse.json({ error: 'Authorization canceled' }, { status: 400 });
+  }
 
   try {
-    // 1. Automatically trade the 1-click login security code for an access token
+    // Ensure no trailing slash breaks the exact match validation
+    const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/auth/facebook/callback`;
+    
+    // 1. Swap the temporary social login code for a token
     const res = await fetch(
-      `https://graph.facebook.com/v20.0/oauth/access_token?client_id=${process.env.FB_CLIENT_ID}&redirect_uri=${process.env.NEXT_PUBLIC_SITE_URL}/api/auth/facebook/callback&client_secret=${process.env.FB_CLIENT_SECRET}&code=${code}`
+      `https://graph.facebook.com/v20.0/oauth/access_token?client_id=${process.env.FB_CLIENT_ID}&redirect_uri=${redirectUri}&client_secret=${process.env.FB_CLIENT_SECRET}&code=${code}`
     );
     const data = await res.json();
+    
+    // X-RAY LAYER 1: If token swap failed, show exactly why
+    if (data.error) {
+      return NextResponse.json({ error: 'Token Exchange Failed', details: data.error });
+    }
+
     const userAccessToken = data.access_token;
 
-    // 2. Query Meta to see which Page the user picked (e.g., Cohort Explorers)
+    // 2. Automatically grab their page profile details
     const accountsRes = await fetch(`https://graph.facebook.com/v20.0/me/accounts?access_token=${userAccessToken}`);
     const accountsData = await accountsRes.json();
+    
+    // X-RAY LAYER 2: If account fetch failed, show exactly why
+    if (accountsData.error) {
+      return NextResponse.json({ error: 'Page Fetch Failed', details: accountsData.error });
+    }
+
     const authorizedPage = accountsData.data?.[0]; 
 
     if (authorizedPage) {
@@ -32,7 +49,7 @@ export async function GET(req: Request) {
         external_account_id: authorizedPage.id
       });
 
-      // 4. Close Meta's popup automatically and refresh your client's CRM window smoothly
+      // 4. Force the popup to close itself and instantly reload your CRM dashboard
       return new NextResponse(`
         <script>
           window.opener.location.reload();
@@ -41,8 +58,16 @@ export async function GET(req: Request) {
       `, { headers: { 'Content-Type': 'text/html' } });
     }
 
-    return NextResponse.json({ error: 'No associated pages authorized' });
-  } catch (e) {
-    return NextResponse.json({ error: 'Handshake connection failed' }, { status: 500 });
+    // X-RAY LAYER 3: Show exactly what Facebook sent back if the page list is empty
+    return NextResponse.json({ 
+      error: 'No associated pages authorized', 
+      meta_response: accountsData 
+    });
+
+  } catch (e: any) {
+    return NextResponse.json({ 
+      error: 'Handshake connection failed', 
+      message: e.message 
+    }, { status: 500 });
   }
 }
