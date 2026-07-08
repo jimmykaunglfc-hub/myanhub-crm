@@ -17,11 +17,14 @@ export async function GET(req: NextRequest) {
 
   const VERIFY_TOKEN = "myanhub_secure_webhook";
 
+  // If Facebook sends the correct password, we echo back the challenge number
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('✅ FACEBOOK WEBHOOK VERIFIED!');
     return new NextResponse(challenge, { status: 200 });
-  } else {
-    return new NextResponse('Forbidden', { status: 403 });
   }
+
+  // If someone else tries to ping it, we reject them
+  return new NextResponse('Forbidden', { status: 403 });
 }
 
 // ==========================================
@@ -59,8 +62,7 @@ export async function POST(req: NextRequest) {
       text = event.message.text;
       externalId = event.sender.id;
       
-      // 🚀 THE WORKAROUND: Create a unique dynamic name using their unique ID (e.g., FB User #38719)
-      // This permanently stops your inbox from stacking up identical "Facebook Lead" duplicates!
+      // 🚀 THE WORKAROUND: Create a unique dynamic name using their unique ID
       fallbackName = `FB User #${externalId.slice(-5)}`;
       socialLink = `https://facebook.com/${externalId}`;
 
@@ -73,7 +75,7 @@ export async function POST(req: NextRequest) {
           .single();
 
         if (integration?.token) {
-          const fbProfileRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
+          const fbProfileRes = await fetch(`https://graph.facebook.com/v20.0/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
           
           if (fbProfileRes.ok) {
             const fbProfile = await fbProfileRes.json();
@@ -170,7 +172,6 @@ export async function POST(req: NextRequest) {
         
         if (rawAiReply.includes('__ORDER__')) {
           const splitReply = rawAiReply.split('__ORDER__');
-          const friendlyReply = splitReply[0].trim();
           
           let orderJsonString = splitReply[1].trim();
           orderJsonString = orderJsonString.replace(/```json/gi, '').replace(/```/g, '').trim();
