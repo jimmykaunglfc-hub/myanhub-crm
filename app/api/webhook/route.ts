@@ -58,10 +58,12 @@ export async function POST(req: NextRequest) {
       platform = 'facebook';
       text = event.message.text;
       externalId = event.sender.id;
-      fallbackName = 'Facebook Lead';
+      
+      // 🚀 THE WORKAROUND: Create a unique dynamic name using their unique ID (e.g., FB User #38719)
+      // This permanently stops your inbox from stacking up identical "Facebook Lead" duplicates!
+      fallbackName = `FB User #${externalId.slice(-5)}`;
       socialLink = `https://facebook.com/${externalId}`;
 
-      // 🔥 DIAGNOSTIC FIX: Explicitly target v19.0 and log Meta's exact rejection reasons
       try {
         const { data: integration } = await supabase
           .from('workspace_integrations')
@@ -80,7 +82,6 @@ export async function POST(req: NextRequest) {
               console.log("🔥 SUCCESS: Extracted Facebook Name:", fallbackName);
             }
           } else {
-            // If Facebook rejects it, print their exact error message!
             const errText = await fbProfileRes.text();
             console.error("🔥 META GRAPH API REJECTION:", errText);
           }
@@ -117,8 +118,8 @@ export async function POST(req: NextRequest) {
     if (existingCustomer) {
       customerId = existingCustomer.id;
       
-      // Update the name if we finally bypassed the Facebook lock
-      if (existingCustomer.name === 'Facebook Lead' && fallbackName !== 'Facebook Lead') {
+      // Upgrade them if they are currently stuck as a generic "Facebook Lead"
+      if (existingCustomer.name === 'Facebook Lead' || (existingCustomer.name.startsWith('FB User #') && !fallbackName.startsWith('FB User #'))) {
         await supabase.from('customers').update({ name: fallbackName, social_profile_link: socialLink }).eq('id', customerId);
       } else {
         await supabase.from('customers').update({ social_profile_link: socialLink }).eq('id', customerId);
