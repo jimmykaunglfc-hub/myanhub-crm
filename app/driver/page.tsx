@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { 
-  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone, Bug
+  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone
 } from 'lucide-react';
 
 interface Order {
@@ -42,10 +42,6 @@ export default function DriverApp() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'pool' | 'my_route'>('my_route');
 
-  // Diagnostic Logs
-  const [debugError, setDebugError] = useState<string>('None');
-  const [rawCount, setRawCount] = useState<number>(0);
-
   // Delivery Modal States
   const [activeDelivery, setActiveDelivery] = useState<Order | null>(null);
   const [paymentStatus, setPaymentStatus] = useState('Cash Received');
@@ -54,7 +50,6 @@ export default function DriverApp() {
 
   const fetchDeliveries = async () => {
     try {
-      // 🚀 THE CRITICAL FIX: Reverted join to only request 'name' to stop the Postgres crash
       const { data, error } = await supabase
         .from('orders')
         .select('*, customers(name)')
@@ -62,17 +57,15 @@ export default function DriverApp() {
         .order('created_at', { ascending: true });
 
       if (error) {
-        setDebugError(error.message);
+        console.error("Database query failed:", error.message);
         return;
       }
 
       if (data) {
-        setRawCount(data.length);
         setDeliveries(data as unknown as Order[]);
-        setDebugError('None - Query Successful');
       }
     } catch (err: any) {
-      setDebugError(err.message || 'Unknown query crash');
+      console.error("Crash during network call:", err.message);
     } finally {
       setLoading(false);
     }
@@ -101,7 +94,7 @@ export default function DriverApp() {
 
         await fetchDeliveries();
       } catch (err: any) {
-        setDebugError(`Init Catch: ${err.message}`);
+        console.error("Initialization failed:", err.message);
         setLoading(false);
       }
     };
@@ -109,7 +102,7 @@ export default function DriverApp() {
     initializeApp();
   }, [router]);
 
-  // Real-time updates
+  // Real-time updates subscription
   useEffect(() => {
     const channel = supabase.channel('live-driver-orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
@@ -177,13 +170,13 @@ export default function DriverApp() {
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
-  // Safe client-side grouping that handles both nulls and workspace matching smoothly
+  // Safe grouping matrix
   const poolOrders = deliveries.filter(o => !o.assigned_driver_id || o.delivery_state === 'unassigned');
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
 
   return (
-    <div className={`min-h-screen font-sans flex flex-col pb-44 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
+    <div className={`min-h-screen font-sans flex flex-col pb-12 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
       
       <header className={`pt-12 pb-0 px-6 shadow-sm z-10 ${isDarkMode ? 'bg-slate-900' : 'bg-indigo-600 text-white'}`}>
         <div className="flex justify-between items-center mb-6">
@@ -218,7 +211,6 @@ export default function DriverApp() {
           </div>
         ) : (
           displayOrders.map(order => {
-            // Smart Fallback System: Grabs address and phone regardless of which table holds them
             const displayAddress = order.delivery_address || order.address || order.customers?.address || 'No address details provided.';
             const displayPhone = order.contact_phone || order.phone || order.customers?.phone || null;
 
@@ -234,7 +226,7 @@ export default function DriverApp() {
                   </div>
                 </div>
                 
-                {/* SAFE CONTACT AND ROUTING BLOCK */}
+                {/* CONTACT DETAILS AREA */}
                 <div className="space-y-3 mb-6 border-t border-b py-4 my-4 dark:border-slate-800 border-slate-100">
                   <div className="flex items-start gap-3 text-sm font-medium">
                     <div className={`p-2 rounded-lg mt-0.5 flex-shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><MapPin size={16} /></div>
@@ -254,7 +246,7 @@ export default function DriverApp() {
                   )}
                 </div>
 
-                {/* ACTION TRIGGER */}
+                {/* INTERACTION MATRIX */}
                 {!order.assigned_driver_id ? (
                   <button onClick={() => claimOrder(order.id)} className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform text-sm">
                     <HandGrab size={16} /> Claim Route
@@ -288,7 +280,7 @@ export default function DriverApp() {
         )}
       </main>
 
-      {/* DELIVERY MODAL */}
+      {/* CONFIRMATION WIDGET */}
       {activeDelivery && (
         <div className={`fixed inset-0 z-50 flex flex-col ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
           <div className={`pt-12 pb-4 px-6 flex justify-between items-center border-b ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
@@ -328,19 +320,6 @@ export default function DriverApp() {
           </div>
         </div>
       )}
-
-      {/* SYSTEM DIAGNOSTIC BANNER */}
-      <div className="fixed bottom-0 left-0 right-0 bg-slate-900 text-slate-200 border-t border-slate-700 p-4 font-mono text-xs z-50 shadow-2xl">
-        <div className="flex items-center gap-2 text-amber-400 font-bold mb-1">
-          <Bug size={14} /> SYSTEM DIAGNOSTIC NODE
-        </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 opacity-90">
-          <div>Logged User: <span className="text-cyan-400">{userId ? userId.slice(0, 8) + '...' : 'Null'}</span></div>
-          <div>Workspace ID: <span className="text-purple-400">{workspaceId ? workspaceId.slice(0, 8) + '...' : 'Null'}</span></div>
-          <div>Raw In Transit Found: <span className="text-emerald-400 font-bold">{rawCount} rows</span></div>
-          <div className="col-span-2 text-emerald-400 truncate">Supabase Status: {debugError}</div>
-        </div>
-      </div>
 
     </div>
   );
