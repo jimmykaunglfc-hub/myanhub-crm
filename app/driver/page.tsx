@@ -114,7 +114,42 @@ export default function DriverApp() {
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId]);
 
-  // 🚀 DRIVER UPDATE SELF-PHONE HANDLER
+  // 🚀 FIXED: Added explicit error catching and browser alerts for gateway visibility
+  const sendOrderNotification = async (order: Order, newStatus: string) => {
+    if (!workspaceId) return; 
+
+    let notificationText = '';
+    const activeDriverPhone = phoneInputValue || userPhone || 'N/A';
+    
+    if (newStatus === 'assigned') {
+      notificationText = `🚚 Order Update: Great news! Your order ${order.order_id_string} has been assigned to our driver. You can contact them at: ${activeDriverPhone}`;
+    } else if (newStatus === 'picked_up') {
+      notificationText = `🚚 Order Update: Your order ${order.order_id_string} is currently in transit and heading your way! Driver contact number: ${activeDriverPhone}`;
+    } else if (newStatus === 'arrived') {
+      notificationText = `📍 Driver Arrived: Our driver is at your location with order ${order.order_id_string}. Please be ready to receive it!`;
+    } else if (newStatus === 'delivered') {
+      notificationText = `✅ Order Delivered: Your order ${order.order_id_string} has been successfully delivered. Thank you!`;
+    }
+
+    if (!notificationText) return;
+
+    try {
+      const res = await fetch('/api/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: order.customer_id, text: notificationText, userId: workspaceId })
+      });
+
+      // 🚨 EXPOSE THE CULPRIT: If the server returns an error code, display it immediately
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        alert(`Message Route Blocked: ${errorData.error || 'Server rejected request'}`);
+      }
+    } catch (err: any) {
+      alert(`Network connection dropped: ${err.message}`);
+    }
+  };
+
   const handleUpdatePhone = async () => {
     if (!userId) return;
     setIsSavingPhone(true);
@@ -135,15 +170,39 @@ export default function DriverApp() {
 
   const claimOrder = async (orderId: string) => {
     if (!userId) return;
+    
+    const targetOrder = deliveries.find(o => o.id === orderId);
+    if (!targetOrder) return;
+
     setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
     setActiveTab('my_route');
 
-    await supabase.from('orders').update({ assigned_driver_id: userId, delivery_state: 'assigned' }).eq('id', orderId);
+    const { error } = await supabase.from('orders').update({ 
+      assigned_driver_id: userId, 
+      delivery_state: 'assigned' 
+    }).eq('id', orderId);
+
+    if (!error) {
+      sendOrderNotification(targetOrder, 'assigned');
+    } else {
+      alert(`Failed to claim route database record: ${error.message}`);
+      if (workspaceId) fetchDeliveries(workspaceId);
+    }
   };
 
   const advanceProgress = async (orderId: string, newState: string) => {
+    const targetOrder = deliveries.find(o => o.id === orderId);
+    if (!targetOrder) return;
+
     setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, delivery_state: newState as any } : o));
-    await supabase.from('orders').update({ delivery_state: newState }).eq('id', orderId);
+    
+    const { error } = await supabase.from('orders').update({ delivery_state: newState }).eq('id', orderId);
+    
+    if (!error) {
+      sendOrderNotification(targetOrder, newState);
+    } else {
+      alert(`Database rejected status transition: ${error.message}`);
+    }
   };
 
   const submitDelivery = async (e: React.FormEvent) => {
@@ -169,6 +228,8 @@ export default function DriverApp() {
         payment_status: paymentStatus,
         delivery_evidence_url: uploadedUrl
       }).eq('id', activeDelivery.id);
+
+      sendOrderNotification(activeDelivery, 'delivered');
 
       setActiveDelivery(null);
       setEvidenceFile(null);
@@ -199,7 +260,7 @@ export default function DriverApp() {
           </button>
         </div>
 
-        {/* 🚀 SELF-SERVICE LIVE PHONE CONFIG PANEL */}
+        {/* SELF-SERVICE LIVE PHONE CONFIG PANEL */}
         <div className="mb-4 py-2.5 px-4 rounded-xl bg-white/10 text-white flex items-center justify-between text-xs font-semibold backdrop-blur-sm">
           <div className="flex items-center gap-2 flex-1 mr-4">
             <Phone size={14} className="opacity-70" />
