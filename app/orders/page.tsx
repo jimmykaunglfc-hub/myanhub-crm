@@ -33,7 +33,6 @@ interface Order {
   customers: { name: string } | null;
 }
 
-// 🚀 UPDATED: Driver interface now expects the newly added phone string field handle
 interface Driver { id: string; full_name: string; phone: string | null; }
 
 const COLUMNS = [
@@ -85,8 +84,6 @@ export default function OrdersPipeline() {
   const fetchDashboardData = async () => {
     if (!userId) return;
     const { data: orderData } = await supabase.from('orders').select('*, customers(name)').eq('user_id', userId).order('created_at', { ascending: false });
-    
-    // 🚀 UPDATED: Explicitly selecting 'phone' along with ID and Name from profiles
     const { data: driverData } = await supabase.from('profiles').select('id, full_name, phone').eq('workspace_id', userId).eq('role', 'driver');
 
     if (orderData) setOrders(orderData as Order[]);
@@ -175,7 +172,6 @@ export default function OrdersPipeline() {
     const targetOrder = orders.find(o => o.id === orderId);
     const assignedDriver = drivers.find(d => d.id === driverId);
     if (targetOrder && assignedDriver && userId) {
-      // 🚀 UPDATED: Injected the live driver phone variable directly into the automated messaging sequence text string
       const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been assigned to our driver, ${assignedDriver.full_name}, and will be dispatched soon! Driver contact number: ${assignedDriver.phone || 'N/A'}`;
       
       await supabase.from('messages').insert({
