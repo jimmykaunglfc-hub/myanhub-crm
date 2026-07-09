@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
           // B. THE AUTO-REOPEN FIX: 
           // Update the customer's profile using the correct 'chat_status' column
           await supabase.from('customers')
-            .update({ chat_status: 'active' }) // Now matches your DB schema exactly!
+            .update({ chat_status: 'active' })
             .eq('id', customerId);
         }
 
@@ -199,6 +199,24 @@ export async function POST(req: NextRequest) {
           const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', userId);
           const stockContext = inventory?.map(i => `- ${i.name} (Stock: ${i.stock_quantity}, Price: ${i.price} ${profile.currency_code})`).join('\n') || 'No items available.';
 
+          // 🚀 FIX: Fetch recent conversation history from the database to cure AI "amnesia"
+          const { data: historyLogs } = await supabase
+            .from('messages')
+            .select('content, sender')
+            .eq('customer_id', customerId)
+            .order('created_at', { ascending: false })
+            .limit(6); // Grab the last 6 messages
+
+          let conversationMemory = `Customer: "${text}"`; // Fallback just in case
+          
+          if (historyLogs && historyLogs.length > 0) {
+            // Reverse it so it reads chronologically from oldest to newest (newest being the current message)
+            conversationMemory = historyLogs
+              .reverse()
+              .map(log => `${log.sender === 'customer' ? 'Customer' : 'Store Assistant'}: ${log.content.replace('🤖 ', '')}`)
+              .join('\n');
+          }
+
           const systemPrompt = `
             You are a friendly, concise sales assistant for a store. 
             Here is our live inventory right now:
@@ -206,16 +224,17 @@ export async function POST(req: NextRequest) {
             
             Currency: ${profile.currency_code}.
             
-            Rule 1: Answer customer questions quickly. Do not sound like a robot.
-            Rule 2: If they want to order, ask them for their Delivery Address and Phone Number.
-            Rule 3: IF the customer has confirmed what they want AND provided an address AND a phone number, you MUST append this exact JSON block to the END of your reply, replacing the bracketed info:
-            __ORDER__ {"itemName": "[Exact Name from Inventory]", "qty": [Number], "address": "[Address]", "phone": "[Phone]"}
+            Rule 1: Answer customer questions quickly based on the conversation history. Do not sound like a robot.
+            Rule 2: If they want to order, ask them for their Delivery Address and Phone Number (if they haven't provided it yet).
+            Rule 3: Look at the full conversation log. IF the customer has confirmed what they want AND provided an address AND a phone number, you MUST append this exact JSON block to the END of your reply, replacing the bracketed info:
+            __ORDER__ {"itemName": "[Exact Name from Inventory]", "qty": [Number], "address": "[Address from chat]", "phone": "[Phone from chat]"}
           `;
 
+          // 🚀 Inject the full conversation history instead of just the single text string
           const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
             method: 'POST', 
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\nCustomer said: "${text}"\nYour Reply:` }] }] })
+            body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\nRecent Conversation Log:\n${conversationMemory}\n\nYour Reply:` }] }] })
           });
           
           if (geminiRes.ok) {
