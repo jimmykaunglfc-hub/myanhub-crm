@@ -33,7 +33,8 @@ interface Order {
   customers: { name: string } | null;
 }
 
-interface Driver { id: string; full_name: string; }
+// 🚀 UPDATED: Driver interface now expects the newly added phone string field handle
+interface Driver { id: string; full_name: string; phone: string | null; }
 
 const COLUMNS = [
   { id: 'pending', title: 'PENDING', icon: <Clock size={16} className="text-amber-500" />, bg: 'bg-amber-500', border: 'border-amber-500' },
@@ -84,7 +85,9 @@ export default function OrdersPipeline() {
   const fetchDashboardData = async () => {
     if (!userId) return;
     const { data: orderData } = await supabase.from('orders').select('*, customers(name)').eq('user_id', userId).order('created_at', { ascending: false });
-    const { data: driverData } = await supabase.from('profiles').select('id, full_name').eq('workspace_id', userId).eq('role', 'driver');
+    
+    // 🚀 UPDATED: Explicitly selecting 'phone' along with ID and Name from profiles
+    const { data: driverData } = await supabase.from('profiles').select('id, full_name, phone').eq('workspace_id', userId).eq('role', 'driver');
 
     if (orderData) setOrders(orderData as Order[]);
     if (driverData) setDrivers(driverData as Driver[]);
@@ -165,12 +168,15 @@ export default function OrdersPipeline() {
   // DISPATCH CONTROLS
   // -------------------------------------------------------------
   const handleAssignInternalDriver = async (orderId: string, driverId: string) => {
+    if (!driverId) return;
+
     await supabase.from('orders').update({ assigned_driver_id: driverId, delivery_state: 'assigned', is_external_delivery: false }).eq('id', orderId);
     
     const targetOrder = orders.find(o => o.id === orderId);
     const assignedDriver = drivers.find(d => d.id === driverId);
     if (targetOrder && assignedDriver && userId) {
-      const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been assigned to our driver, ${assignedDriver.full_name}, and will be dispatched soon!`;
+      // 🚀 UPDATED: Injected the live driver phone variable directly into the automated messaging sequence text string
+      const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been assigned to our driver, ${assignedDriver.full_name}, and will be dispatched soon! Driver contact number: ${assignedDriver.phone || 'N/A'}`;
       
       await supabase.from('messages').insert({
         customer_id: targetOrder.customer_id, sender: 'Workspace Manager',
@@ -337,7 +343,6 @@ export default function OrdersPipeline() {
                           </div>
                           
                           <div className="space-y-1.5 mb-4">
-                            {/* DYNAMIC CURRENCY APPLIED HERE */}
                             <div className={`text-lg font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
                               {formatCurrency(order.total_amount, workspaceCurrency)}
                             </div>
