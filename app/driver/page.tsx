@@ -48,11 +48,14 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchDeliveries = async () => {
+  const fetchDeliveries = async (targetWorkspaceId: string) => {
+    if (!targetWorkspaceId) return;
+    
     try {
       const { data, error } = await supabase
         .from('orders')
         .select('*, customers(name)')
+        .eq('user_id', targetWorkspaceId) // 🔒 SECURED: Restored multi-tenant isolation gate
         .eq('status', 'in_transit')
         .order('created_at', { ascending: true });
 
@@ -92,7 +95,7 @@ export default function DriverApp() {
         setWorkspaceId(activeWorkspaceId);
         if (profile?.phone) setUserPhone(profile.phone);
 
-        await fetchDeliveries();
+        await fetchDeliveries(activeWorkspaceId);
       } catch (err: any) {
         console.error("Initialization failed:", err.message);
         setLoading(false);
@@ -102,16 +105,18 @@ export default function DriverApp() {
     initializeApp();
   }, [router]);
 
-  // Real-time updates subscription
+  // Real-time updates subscription mapped to specific workspace context
   useEffect(() => {
+    if (!workspaceId) return;
+
     const channel = supabase.channel('live-driver-orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchDeliveries();
+        if (workspaceId) fetchDeliveries(workspaceId);
       })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [workspaceId]);
 
   const claimOrder = async (orderId: string) => {
     if (!userId) return;
@@ -126,7 +131,7 @@ export default function DriverApp() {
 
     if (error) {
       alert("Failed to claim order.");
-      fetchDeliveries();
+      if (workspaceId) fetchDeliveries(workspaceId);
     }
   };
 
@@ -170,7 +175,7 @@ export default function DriverApp() {
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
-  // Safe grouping matrix
+  // Roster filters
   const poolOrders = deliveries.filter(o => !o.assigned_driver_id || o.delivery_state === 'unassigned');
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
