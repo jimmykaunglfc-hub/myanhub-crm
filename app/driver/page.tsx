@@ -1,6 +1,6 @@
 "use client";
 
-import { formatCurrency } from '../../lib/formatters';
+import { formatNumber, formatCurrency } from '../../lib/formatters';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
@@ -15,7 +15,7 @@ interface Order {
   total_amount: number;
   status: string;
   payment_status: string;
-  delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered' | null;
+  delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
   assigned_driver_id: string | null;
   created_at: string;
   customer_id: string; 
@@ -27,7 +27,7 @@ export default function DriverApp() {
   const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
-  const [userPhone, setUserPhone] = useState<string>('N/A'); 
+  const [userPhone, setUserPhone] = useState<string>('N/A'); // Driver's phone
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,97 +39,65 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Guaranteed initialization flow
   useEffect(() => {
-    let isMounted = true;
-
-    const failsafe = setTimeout(() => {
-      if (isMounted) setLoading(false);
-    }, 3000);
-
-    const initializeApp = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error || !session) {
-          router.replace('/login');
-          return;
-        }
-        
-        if (isMounted) setUserId(session.user.id);
-        
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('workspace_id, phone')
-          .eq('id', session.user.id)
-          .single();
-          
-        const activeWorkspaceId = profile?.workspace_id || session.user.id;
-        
-        if (isMounted) {
-          setWorkspaceId(activeWorkspaceId);
-          if (profile?.phone) setUserPhone(profile.phone);
-        }
-
-        // 🚀 THE FIX 1: Fetch strictly 'in_transit' orders to match the CRM column
-        const { data: ordersData, error: ordersError } = await supabase
-          .from('orders')
-          .select('*, customers(name)')
-          .eq('user_id', activeWorkspaceId)
-          .eq('status', 'in_transit') 
-          .order('created_at', { ascending: true });
-
-        if (!ordersError && ordersData && isMounted) {
-          setDeliveries(ordersData as Order[]);
-        }
-      } catch (err) {
-        console.error("Driver App Init Error:", err);
-      } finally {
-        if (isMounted) setLoading(false);
-        clearTimeout(failsafe);
+    const checkSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error || !session) {
+        router.replace('/login');
+        return;
+      }
+      setUserId(session.user.id);
+      
+      // Fetch profile data including the phone number
+      const { data: profile } = await supabase.from('profiles').select('workspace_id, phone').eq('id', session.user.id).single();
+      if (profile) {
+        setWorkspaceId(profile.workspace_id);
+        if (profile.phone) setUserPhone(profile.phone);
       }
     };
-    
-    initializeApp();
-
-    return () => { isMounted = false; clearTimeout(failsafe); };
+    checkSession();
   }, [router]);
 
-  // Real-time updates
+  const fetchDeliveries = async () => {
+    if (!workspaceId) return;
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*, customers(name)')
+      .eq('user_id', workspaceId)
+      .eq('status', 'in_transit') // Restored exactly to original
+      .order('created_at', { ascending: true });
+
+    if (!error && data) setDeliveries(data as Order[]);
+    setLoading(false);
+  };
+
+  useEffect(() => { if (workspaceId) fetchDeliveries(); }, [workspaceId]);
+
   useEffect(() => {
     if (!workspaceId) return;
-    
-    const refreshDeliveries = async () => {
-      const { data } = await supabase
-        .from('orders')
-        .select('*, customers(name)')
-        .eq('user_id', workspaceId)
-        .eq('status', 'in_transit')
-        .order('created_at', { ascending: true });
-        
-      if (data) setDeliveries(data as Order[]);
-    };
-
     const channel = supabase.channel('live-driver-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, refreshDeliveries)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchDeliveries(); 
+      })
       .subscribe();
-      
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId]);
 
   // -------------------------------------------------------------
-  // AUTOMATED TRACKING NOTIFICATION ENGINE 
+  // AUTOMATED TRACKING NOTIFICATION ENGINE (Driver Side)
   // -------------------------------------------------------------
   const sendOrderNotification = async (order: Order, newStatus: string) => {
     if (!workspaceId) return; 
 
     let notificationText = '';
     
+    // Notification logic with Driver's Phone Number
     if (newStatus === 'assigned') {
       notificationText = `🚚 Great news! Your order ${order.order_id_string} has been picked up by our driver. You can contact them at: ${userPhone}`;
     } else if (newStatus === 'picked_up') {
-      notificationText = `📦 Order Update: Your order ${order.order_id_string} is now in transit and heading your way!`;
+      notificationText = `🚚 Order Update: Your order ${order.order_id_string} has been picked up by our driver and is on its way!`;
     } else if (newStatus === 'arrived') {
-      notificationText = `📍 Driver Arrived: Our driver is at your location with order ${order.order_id_string}. Please be ready!`;
+      notificationText = `📍 Driver Arrived: Our driver is at your location with order ${order.order_id_string}. Please be ready to receive it!`;
     } else if (newStatus === 'delivered') {
       notificationText = `✅ Order Delivered: Your order ${order.order_id_string} has been successfully delivered. Thank you!`;
     }
@@ -151,24 +119,27 @@ export default function DriverApp() {
     }).catch(err => console.error("Tracking notification failed to send.", err));
   };
 
-  // ACTION: Claim an order from the pool 
-  const claimOrder = async (order: Order) => {
+  // ACTION: Claim an order from the pool
+  const claimOrder = async (orderId: string) => {
     if (!userId) return;
     
-    setDeliveries(prev => prev.map(o => o.id === order.id ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
+    // 1. Optimistic UI: Update screen instantly
+    setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
     setActiveTab('my_route');
 
+    // 2. Background Sync
     const { error } = await supabase.from('orders').update({ 
       assigned_driver_id: userId, 
       delivery_state: 'assigned' 
-    }).eq('id', order.id);
+    }).eq('id', orderId);
 
     if (error) {
       alert("Failed to claim order. Check connection.");
-      const { data } = await supabase.from('orders').select('*, customers(name)').eq('user_id', workspaceId!).eq('status', 'in_transit').order('created_at', { ascending: true });
-      if (data) setDeliveries(data as Order[]);
+      fetchDeliveries(); // Revert screen if failed
     } else {
-      sendOrderNotification(order, 'assigned'); 
+      // 3. Trigger notification for assigning driver
+      const targetOrder = deliveries.find(o => o.id === orderId);
+      if (targetOrder) sendOrderNotification(targetOrder, 'assigned');
     }
   };
 
@@ -180,6 +151,7 @@ export default function DriverApp() {
     
     if (error) {
       alert("Failed to update progress.");
+      fetchDeliveries(); 
     } else {
       const targetOrder = deliveries.find(o => o.id === orderId);
       if (targetOrder) sendOrderNotification(targetOrder, newState);
@@ -218,6 +190,7 @@ export default function DriverApp() {
       setEvidenceFile(null);
     } catch (error: any) {
       alert(`Delivery failed: ${error.message}`);
+      fetchDeliveries(); 
     } finally {
       setIsSubmitting(false);
     }
@@ -225,10 +198,10 @@ export default function DriverApp() {
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
-  // 🚀 THE FIX 2: Filter the pool by checking if the assigned driver is empty, completely ignoring 'delivery_state' text bugs
-  const poolOrders = deliveries.filter(o => !o.assigned_driver_id);
+  // Restored exactly to your original logic
+  const poolOrders = deliveries.filter(o => o.delivery_state === 'unassigned');
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
-  
+
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
 
   return (
@@ -245,6 +218,7 @@ export default function DriverApp() {
           </button>
         </div>
 
+        {/* Tabs */}
         <div className="flex gap-4 border-b border-white/20">
           <button onClick={() => setActiveTab('my_route')} className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeTab === 'my_route' ? 'border-white opacity-100' : 'border-transparent opacity-50'}`}>
             My Route ({myRouteOrders.length})
@@ -274,7 +248,7 @@ export default function DriverApp() {
                   <p className={`text-lg font-black mt-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatCurrency(order.total_amount, 'USD')}</p>
                 </div>
                 <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${activeTab === 'pool' ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/20 text-blue-500'}`}>
-                  {activeTab === 'pool' ? 'Needs Driver' : (order.delivery_state || 'assigned').replace('_', ' ')}
+                  {activeTab === 'pool' ? 'Needs Driver' : order.delivery_state.replace('_', ' ')}
                 </div>
               </div>
               
@@ -285,7 +259,7 @@ export default function DriverApp() {
 
               {/* ACTION AREA */}
               {activeTab === 'pool' ? (
-                <button onClick={() => claimOrder(order)} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform">
+                <button onClick={() => claimOrder(order.id)} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform">
                   <HandGrab size={16} /> Claim Route
                 </button>
               ) : (
@@ -296,7 +270,7 @@ export default function DriverApp() {
                   </div>
 
                   {/* DYNAMIC PROGRESS BUTTONS */}
-                  {(order.delivery_state === 'assigned' || !order.delivery_state) && (
+                  {order.delivery_state === 'assigned' && (
                     <button onClick={() => advanceProgress(order.id, 'picked_up')} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform border dark:border-slate-700">
                       <Package size={16} /> Mark as Picked Up
                     </button>
