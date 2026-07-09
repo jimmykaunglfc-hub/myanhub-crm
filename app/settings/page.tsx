@@ -7,7 +7,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Sliders, Info, MessageSquare, MessageCircle, ShoppingBag, 
-  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote, Bot, Copy, Building, Phone
+  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote, Bot, Building, Phone
 } from 'lucide-react';
 
 type ChannelType = 'facebook' | 'telegram' | 'viber' | 'tiktok' | 'whatsapp' | 'line';
@@ -45,7 +45,6 @@ export default function EnhancedSettings() {
   const [credentialKey, setCredentialKey] = useState('');
   const [channelStatus, setChannelStatus] = useState('');
   const [isEditing, setIsEditing] = useState(false);
-  const [copiedField, setCopiedField] = useState('');
   
   // Security States
   const [newPassword, setNewPassword] = useState('');
@@ -61,7 +60,7 @@ export default function EnhancedSettings() {
         setUserEmail(user.email || '');
         setUserId(user.id);
         
-        // 🚀 UPGRADED: Now fetches business name and phone number
+        // Fetch business name and phone number alongside currency and AI
         const { data: profile } = await supabase
           .from('profiles')
           .select('currency_code, ai_auto_respond, business_name, phone')
@@ -82,7 +81,7 @@ export default function EnhancedSettings() {
     initializeSettings();
   }, []);
 
-  // 🚀 NEW: Save Business Profile Handler
+  // Save Business Profile Handler
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingProfile(true);
@@ -102,7 +101,7 @@ export default function EnhancedSettings() {
     }
   };
 
-  // SAFELY HANDLE CURRENCY SAVING
+  // Safely Handle Currency Saving
   const handleCurrencyChange = async (newCurrency: string) => {
     setCurrencyCode(newCurrency);
     setIsSavingCurrency(true);
@@ -137,12 +136,6 @@ export default function EnhancedSettings() {
       alert(`AI UPDATE ERROR: ${error.message}`);
       setAiEnabled(!newState); 
     }
-  };
-
-  const handleCopy = (text: string, field: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(''), 2000);
   };
 
   const triggerKlinkStyleLogin = () => {
@@ -406,7 +399,7 @@ export default function EnhancedSettings() {
                   /* 2. NEW CONNECTION OR EDITING STATE */
                   <div className="space-y-5">
                     
-                    {/* FACEBOOK OAUTH WIDGET (REPLACES OLD TEXT BOXES) */}
+                    {/* FACEBOOK OAUTH WIDGET */}
                     {activeChannel === 'facebook' ? (
                       <div className={`border rounded-xl p-6 max-w-md ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                         <div className="flex items-center gap-3 mb-4">

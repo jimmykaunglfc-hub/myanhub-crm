@@ -76,28 +76,16 @@ export default function DriverApp() {
         .from('orders')
         .select('*, customers(name)')
         .eq('user_id', workspaceId)
-        .neq('status', 'fulfilled') // Keeps orders visible even if 'pending' or 'in_transit'
+        .eq('status', 'in_transit') // 🚀 REVERTED: Now matches your CRM's exact status push
         .order('created_at', { ascending: true });
 
       if (!error && data) setDeliveries(data as Order[]);
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false); // Ensures the infinite spinner always stops
+      setLoading(false); 
     }
   };
-
-  useEffect(() => { if (workspaceId) fetchDeliveries(); }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    const channel = supabase.channel('live-driver-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchDeliveries(); 
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [workspaceId]);
 
   // -------------------------------------------------------------
   // AUTOMATED TRACKING NOTIFICATION ENGINE 
