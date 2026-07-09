@@ -7,7 +7,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
   Sliders, Info, MessageSquare, MessageCircle, ShoppingBag, 
-  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote, Bot, Copy
+  PhoneCall, Shield, KeyRound, CheckCircle2, AlertCircle, Trash2, Banknote, Bot, Copy, Building, Phone
 } from 'lucide-react';
 
 type ChannelType = 'facebook' | 'telegram' | 'viber' | 'tiktok' | 'whatsapp' | 'line';
@@ -30,6 +30,12 @@ export default function EnhancedSettings() {
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [isSavingCurrency, setIsSavingCurrency] = useState(false);
   
+  // Business Profile States
+  const [businessName, setBusinessName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileSaveMsg, setProfileSaveMsg] = useState('');
+
   // AI Auto-Pilot State
   const [aiEnabled, setAiEnabled] = useState(false);
   
@@ -45,7 +51,7 @@ export default function EnhancedSettings() {
   const [newPassword, setNewPassword] = useState('');
   const [profileStatus, setProfileStatus] = useState('');
 
-  // 1. Fetch Session, Profile (Currency & AI), & Integrations
+  // 1. Fetch Session, Profile & Integrations
   useEffect(() => {
     setDomainUrl(window.location.host);
 
@@ -55,17 +61,18 @@ export default function EnhancedSettings() {
         setUserEmail(user.email || '');
         setUserId(user.id);
         
+        // 🚀 UPGRADED: Now fetches business name and phone number
         const { data: profile } = await supabase
           .from('profiles')
-          .select('currency_code, ai_auto_respond')
+          .select('currency_code, ai_auto_respond, business_name, phone')
           .eq('id', user.id)
           .single();
           
-        if (profile?.currency_code) {
-          setCurrencyCode(profile.currency_code);
-        }
-        if (profile?.ai_auto_respond !== undefined) {
-          setAiEnabled(profile.ai_auto_respond);
+        if (profile) {
+          if (profile.currency_code) setCurrencyCode(profile.currency_code);
+          if (profile.ai_auto_respond !== undefined) setAiEnabled(profile.ai_auto_respond);
+          if (profile.business_name) setBusinessName(profile.business_name);
+          if (profile.phone) setPhoneNumber(profile.phone);
         }
 
         const { data: activeInts } = await supabase.from('workspace_integrations').select('*').eq('user_id', user.id);
@@ -74,6 +81,26 @@ export default function EnhancedSettings() {
     };
     initializeSettings();
   }, []);
+
+  // 🚀 NEW: Save Business Profile Handler
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingProfile(true);
+    
+    const { error } = await supabase.from('profiles').update({
+      business_name: businessName,
+      phone: phoneNumber
+    }).eq('id', userId);
+
+    setIsSavingProfile(false);
+    
+    if (error) {
+      setProfileSaveMsg(`Error: ${error.message}`);
+    } else {
+      setProfileSaveMsg('Profile updated successfully!');
+      setTimeout(() => setProfileSaveMsg(''), 4000);
+    }
+  };
 
   // SAFELY HANDLE CURRENCY SAVING
   const handleCurrencyChange = async (newCurrency: string) => {
@@ -118,7 +145,6 @@ export default function EnhancedSettings() {
     setTimeout(() => setCopiedField(''), 2000);
   };
 
-  // 🔥 NEW: Klink-Style Facebook OAuth Trigger
   const triggerKlinkStyleLogin = () => {
     if (!process.env.NEXT_PUBLIC_FB_APP_ID) {
       setChannelStatus('Error: Missing NEXT_PUBLIC_FB_APP_ID in environment variables.');
@@ -129,11 +155,9 @@ export default function EnhancedSettings() {
     const scopes = 'pages_messaging,pages_read_engagement,pages_show_list,pages_manage_metadata';
     const fbOAuthUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${appId}&redirect_uri=${callbackUrl}&scope=${scopes}&state=${userId}`;
     
-    // Spawns the clean, centered popup window over your CRM
     window.open(fbOAuthUrl, 'Facebook Login', 'width=650,height=700,top=100,left=100');
   };
 
-  // Legacy manual setup for other channels
   const handleSaveChannelConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setChannelStatus('Authenticating API gates with platform...');
@@ -449,6 +473,45 @@ export default function EnhancedSettings() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* 🚀 NEW: BUSINESS & CONTACT PROFILE MODULE */}
+          <div className={`p-6 md:p-8 rounded-2xl border shadow-sm transition-colors duration-200 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+            <h3 className="text-lg font-bold mb-1 flex items-center gap-2"><Building size={18} className="text-indigo-600" /> Business & Contact Profile</h3>
+            <p className={`text-xs mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>This information will appear on your automated customer invoices and driver dispatch notifications.</p>
+            
+            <form onSubmit={handleSaveProfile} className="max-w-3xl space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Business Name Input */}
+                <div>
+                  <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Business / Shop Name</label>
+                  <div className="relative">
+                    <Building size={16} className={`absolute left-4 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                    <input type="text" value={businessName} onChange={e => setBusinessName(e.target.value)} placeholder="e.g. MyanHub Official Store" className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
+                  </div>
+                </div>
+
+                {/* Driver Phone Number Input */}
+                <div>
+                  <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Support / Driver Phone</label>
+                  <div className="relative">
+                    <Phone size={16} className={`absolute left-4 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                    <input type="tel" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} placeholder="e.g. 09-123-456-789" className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 pt-2">
+                <button type="submit" disabled={isSavingProfile} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-8 py-3 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50">
+                  {isSavingProfile ? 'Saving...' : 'Save Profile Settings'}
+                </button>
+                {profileSaveMsg && (
+                  <span className={`text-sm font-bold animate-fade-in ${profileSaveMsg.includes('Error') ? 'text-rose-500' : 'text-emerald-500'}`}>
+                    {profileSaveMsg}
+                  </span>
+                )}
+              </div>
+            </form>
           </div>
 
           {/* SECURITY MODULE */}

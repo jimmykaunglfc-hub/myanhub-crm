@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { 
-  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab
+  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone
 } from 'lucide-react';
 
 interface Order {
@@ -18,7 +18,7 @@ interface Order {
   delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
   assigned_driver_id: string | null;
   created_at: string;
-  customer_id: string; // Added to enable notifications
+  customer_id: string; 
   customers: { name: string } | null;
 }
 
@@ -27,6 +27,7 @@ export default function DriverApp() {
   const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
+  const [userPhone, setUserPhone] = useState<string>('N/A'); // 🚀 NEW: Driver's Phone
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,8 +47,18 @@ export default function DriverApp() {
         return;
       }
       setUserId(session.user.id);
-      const { data: profile } = await supabase.from('profiles').select('workspace_id').eq('id', session.user.id).single();
-      if (profile) setWorkspaceId(profile.workspace_id);
+      
+      // 🚀 NEW: Fetch the driver's phone number from their profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('workspace_id, phone')
+        .eq('id', session.user.id)
+        .single();
+        
+      if (profile) {
+        setWorkspaceId(profile.workspace_id);
+        if (profile.phone) setUserPhone(profile.phone);
+      }
     };
     checkSession();
   }, [router]);
@@ -71,31 +82,33 @@ export default function DriverApp() {
     if (!workspaceId) return;
     const channel = supabase.channel('live-driver-orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchDeliveries(); // Re-fetch quietly when Admin assigns an order
+        fetchDeliveries(); 
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId]);
 
   // -------------------------------------------------------------
-  // AUTOMATED TRACKING NOTIFICATION ENGINE (Driver Side)
+  // AUTOMATED TRACKING NOTIFICATION ENGINE 
   // -------------------------------------------------------------
   const sendOrderNotification = async (order: Order, newStatus: string) => {
-    if (!workspaceId) return; // Must use workspaceId to authenticate Telegram webhook
+    if (!workspaceId) return; 
 
     let notificationText = '';
     
-    if (newStatus === 'picked_up') {
-      notificationText = `🚚 Order Update: Your order ${order.order_id_string} has been picked up by our driver and is on its way!`;
+    // 🚀 NEW: Includes the Driver's Phone Number when claimed
+    if (newStatus === 'assigned') {
+      notificationText = `🚚 Great news! Your order ${order.order_id_string} has been picked up by our driver. You can contact them at: ${userPhone}`;
+    } else if (newStatus === 'picked_up') {
+      notificationText = `📦 Order Update: Your order ${order.order_id_string} is now in transit and heading your way!`;
     } else if (newStatus === 'arrived') {
-      notificationText = `📍 Driver Arrived: Our driver is at your location with order ${order.order_id_string}. Please be ready to receive it!`;
+      notificationText = `📍 Driver Arrived: Our driver is at your location with order ${order.order_id_string}. Please be ready!`;
     } else if (newStatus === 'delivered') {
       notificationText = `✅ Order Delivered: Your order ${order.order_id_string} has been successfully delivered. Thank you!`;
     }
 
     if (!notificationText) return;
 
-    // Log the automated action inside the CRM Unified Inbox
     await supabase.from('messages').insert({
       customer_id: order.customer_id,
       sender: 'Workspace Manager',
@@ -104,7 +117,6 @@ export default function DriverApp() {
       user_id: workspaceId 
     });
 
-    // Push the actual message to Telegram
     fetch('/api/send-message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -112,47 +124,44 @@ export default function DriverApp() {
     }).catch(err => console.error("Tracking notification failed to send.", err));
   };
 
-  // ACTION: Claim an order from the pool (INSTANT UI UPDATE)
-  const claimOrder = async (orderId: string) => {
+  // ACTION: Claim an order from the pool 
+  const claimOrder = async (order: Order) => {
     if (!userId) return;
     
-    // 1. Optimistic UI: Update screen instantly
-    setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
+    // Optimistic UI
+    setDeliveries(prev => prev.map(o => o.id === order.id ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
     setActiveTab('my_route');
 
-    // 2. Background Sync
+    // Background Sync
     const { error } = await supabase.from('orders').update({ 
       assigned_driver_id: userId, 
       delivery_state: 'assigned' 
-    }).eq('id', orderId);
+    }).eq('id', order.id);
 
     if (error) {
       alert("Failed to claim order. Check connection.");
-      fetchDeliveries(); // Revert screen if failed
+      fetchDeliveries(); 
+    } else {
+      sendOrderNotification(order, 'assigned'); // 🚀 NEW: Trigger assignment notification
     }
   };
 
-  // ACTION: Advance the delivery progress bar (INSTANT UI UPDATE & NOTIFY)
+  // ACTION: Advance the delivery progress bar
   const advanceProgress = async (orderId: string, newState: string) => {
-    // 1. Optimistic UI: Move progress bar instantly
     setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, delivery_state: newState as any } : o));
 
-    // 2. Background Sync
     const { error } = await supabase.from('orders').update({ delivery_state: newState }).eq('id', orderId);
     
     if (error) {
       alert("Failed to update progress.");
-      fetchDeliveries(); // Revert screen if failed
+      fetchDeliveries(); 
     } else {
-      // 3. Trigger Notification based on new state
       const targetOrder = deliveries.find(o => o.id === orderId);
-      if (targetOrder) {
-        sendOrderNotification(targetOrder, newState);
-      }
+      if (targetOrder) sendOrderNotification(targetOrder, newState);
     }
   };
 
-  // ACTION: Final Delivery Submit (NOTIFY)
+  // ACTION: Final Delivery Submit
   const submitDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeDelivery) return;
@@ -169,10 +178,8 @@ export default function DriverApp() {
         uploadedUrl = publicUrl;
       }
 
-      // 1. Optimistic UI: Remove from list instantly
       setDeliveries(prev => prev.filter(o => o.id !== activeDelivery.id));
 
-      // 2. Background Sync
       await supabase.from('orders').update({ 
         status: 'fulfilled',
         delivery_state: 'delivered',
@@ -180,14 +187,13 @@ export default function DriverApp() {
         delivery_evidence_url: uploadedUrl
       }).eq('id', activeDelivery.id);
 
-      // 3. Trigger Final Notification
       sendOrderNotification(activeDelivery, 'delivered');
 
       setActiveDelivery(null);
       setEvidenceFile(null);
     } catch (error: any) {
       alert(`Delivery failed: ${error.message}`);
-      fetchDeliveries(); // Sync backup
+      fetchDeliveries(); 
     } finally {
       setIsSubmitting(false);
     }
@@ -197,12 +203,12 @@ export default function DriverApp() {
 
   const poolOrders = deliveries.filter(o => o.delivery_state === 'unassigned');
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
-
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
 
   return (
     <div className={`min-h-screen font-sans flex flex-col ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
       
+      {/* 🚀 UPGRADED: Professional Header */}
       <header className={`pt-12 pb-0 px-6 shadow-sm z-10 ${isDarkMode ? 'bg-slate-900' : 'bg-indigo-600 text-white'}`}>
         <div className="flex justify-between items-center mb-6">
           <div>
@@ -214,7 +220,6 @@ export default function DriverApp() {
           </button>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-4 border-b border-white/20">
           <button onClick={() => setActiveTab('my_route')} className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeTab === 'my_route' ? 'border-white opacity-100' : 'border-transparent opacity-50'}`}>
             My Route ({myRouteOrders.length})
@@ -255,7 +260,7 @@ export default function DriverApp() {
 
               {/* ACTION AREA */}
               {activeTab === 'pool' ? (
-                <button onClick={() => claimOrder(order.id)} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform">
+                <button onClick={() => claimOrder(order)} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform">
                   <HandGrab size={16} /> Claim Route
                 </button>
               ) : (
