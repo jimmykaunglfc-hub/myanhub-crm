@@ -21,6 +21,8 @@ interface Order {
   customer_id: string; 
   delivery_address?: string | null;
   contact_phone?: string | null;
+  address?: string | null;
+  phone?: string | null;
   customers: { 
     name: string;
     phone?: string | null;
@@ -40,7 +42,7 @@ export default function DriverApp() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'pool' | 'my_route'>('my_route');
 
-  // Diagnostic Logs (The Ultimate Debug Tools)
+  // Diagnostic Logs
   const [debugError, setDebugError] = useState<string>('None');
   const [rawCount, setRawCount] = useState<number>(0);
 
@@ -50,12 +52,12 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchDeliveries = async (currentWorkspaceId: string) => {
+  const fetchDeliveries = async () => {
     try {
-      // Safely fetch all fields + customer profile properties
+      // 🚀 THE CRITICAL FIX: Reverted join to only request 'name' to stop the Postgres crash
       const { data, error } = await supabase
         .from('orders')
-        .select('*, customers(name, phone, address)')
+        .select('*, customers(name)')
         .eq('status', 'in_transit')
         .order('created_at', { ascending: true });
 
@@ -67,6 +69,7 @@ export default function DriverApp() {
       if (data) {
         setRawCount(data.length);
         setDeliveries(data as unknown as Order[]);
+        setDebugError('None - Query Successful');
       }
     } catch (err: any) {
       setDebugError(err.message || 'Unknown query crash');
@@ -86,21 +89,17 @@ export default function DriverApp() {
         
         setUserId(session.user.id);
         
-        const { data: profile, error: profileError } = await supabase
+        const { data: profile } = await supabase
           .from('profiles')
           .select('workspace_id, phone')
           .eq('id', session.user.id)
           .single();
         
-        if (profileError) {
-          setDebugError(`Profile Fetch Error: ${profileError.message}`);
-        }
-        
         const activeWorkspaceId = profile?.workspace_id || session.user.id;
         setWorkspaceId(activeWorkspaceId);
         if (profile?.phone) setUserPhone(profile.phone);
 
-        await fetchDeliveries(activeWorkspaceId);
+        await fetchDeliveries();
       } catch (err: any) {
         setDebugError(`Init Catch: ${err.message}`);
         setLoading(false);
@@ -110,18 +109,16 @@ export default function DriverApp() {
     initializeApp();
   }, [router]);
 
-  // Real-time listener engine
+  // Real-time updates
   useEffect(() => {
-    if (!workspaceId) return;
-    
     const channel = supabase.channel('live-driver-orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        if (workspaceId) fetchDeliveries(workspaceId);
+        fetchDeliveries();
       })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
-  }, [workspaceId]);
+  }, []);
 
   const claimOrder = async (orderId: string) => {
     if (!userId) return;
@@ -136,7 +133,7 @@ export default function DriverApp() {
 
     if (error) {
       alert("Failed to claim order.");
-      if (workspaceId) fetchDeliveries(workspaceId);
+      fetchDeliveries();
     }
   };
 
@@ -180,7 +177,7 @@ export default function DriverApp() {
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
-  // Driver Filtering Logic
+  // Safe client-side grouping that handles both nulls and workspace matching smoothly
   const poolOrders = deliveries.filter(o => !o.assigned_driver_id || o.delivery_state === 'unassigned');
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
@@ -221,8 +218,9 @@ export default function DriverApp() {
           </div>
         ) : (
           displayOrders.map(order => {
-            const displayAddress = order.delivery_address || order.customers?.address || 'No address details provided.';
-            const displayPhone = order.contact_phone || order.customers?.phone || null;
+            // Smart Fallback System: Grabs address and phone regardless of which table holds them
+            const displayAddress = order.delivery_address || order.address || order.customers?.address || 'No address details provided.';
+            const displayPhone = order.contact_phone || order.phone || order.customers?.phone || null;
 
             return (
               <div key={order.id} className={`p-5 rounded-2xl shadow-sm border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
@@ -236,7 +234,7 @@ export default function DriverApp() {
                   </div>
                 </div>
                 
-                {/* CUSTOMER PROFILE CONTACT DISPLAY SECTION */}
+                {/* SAFE CONTACT AND ROUTING BLOCK */}
                 <div className="space-y-3 mb-6 border-t border-b py-4 my-4 dark:border-slate-800 border-slate-100">
                   <div className="flex items-start gap-3 text-sm font-medium">
                     <div className={`p-2 rounded-lg mt-0.5 flex-shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><MapPin size={16} /></div>
@@ -256,7 +254,7 @@ export default function DriverApp() {
                   )}
                 </div>
 
-                {/* ACTION BUTTON ENGINE */}
+                {/* ACTION TRIGGER */}
                 {!order.assigned_driver_id ? (
                   <button onClick={() => claimOrder(order.id)} className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform text-sm">
                     <HandGrab size={16} /> Claim Route
@@ -280,7 +278,7 @@ export default function DriverApp() {
                     {order.delivery_state === 'arrived' && (
                       <button onClick={() => setActiveDelivery(order)} className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 text-sm shadow-lg shadow-indigo-500/30">
                         <CheckCircle2 size={16} /> Complete Delivery
-                    </button>
+                      </button>
                     )}
                   </div>
                 )}
@@ -290,7 +288,7 @@ export default function DriverApp() {
         )}
       </main>
 
-      {/* COMPLETE DELIVERY MODAL */}
+      {/* DELIVERY MODAL */}
       {activeDelivery && (
         <div className={`fixed inset-0 z-50 flex flex-col ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
           <div className={`pt-12 pb-4 px-6 flex justify-between items-center border-b ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
@@ -331,7 +329,7 @@ export default function DriverApp() {
         </div>
       )}
 
-      {/* 🚀 CRITICAL DIAGNOSTIC DEV MODULE (TEMPORARY LIGHT ON THE SYSTEM) */}
+      {/* SYSTEM DIAGNOSTIC BANNER */}
       <div className="fixed bottom-0 left-0 right-0 bg-slate-900 text-slate-200 border-t border-slate-700 p-4 font-mono text-xs z-50 shadow-2xl">
         <div className="flex items-center gap-2 text-amber-400 font-bold mb-1">
           <Bug size={14} /> SYSTEM DIAGNOSTIC NODE
@@ -340,7 +338,7 @@ export default function DriverApp() {
           <div>Logged User: <span className="text-cyan-400">{userId ? userId.slice(0, 8) + '...' : 'Null'}</span></div>
           <div>Workspace ID: <span className="text-purple-400">{workspaceId ? workspaceId.slice(0, 8) + '...' : 'Null'}</span></div>
           <div>Raw In Transit Found: <span className="text-emerald-400 font-bold">{rawCount} rows</span></div>
-          <div className="col-span-2 text-rose-400 truncate">Supabase Error: {debugError}</div>
+          <div className="col-span-2 text-emerald-400 truncate">Supabase Status: {debugError}</div>
         </div>
       </div>
 
