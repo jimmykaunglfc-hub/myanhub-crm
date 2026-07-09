@@ -182,9 +182,9 @@ export async function POST(req: NextRequest) {
           });
 
           // B. THE AUTO-REOPEN FIX: 
-          // Update the customer's profile so they immediately pop back into the 'Active' inbox tab
+          // Update the customer's profile using the correct 'chat_status' column
           await supabase.from('customers')
-            .update({ status: 'active' }) // Ensure this matches your Active tab query state
+            .update({ chat_status: 'active' }) // Now matches your DB schema exactly!
             .eq('id', customerId);
         }
 
