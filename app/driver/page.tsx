@@ -54,29 +54,36 @@ export default function DriverApp() {
         .eq('id', session.user.id)
         .single();
         
-      if (profile) {
+      if (profile && profile.workspace_id) {
         setWorkspaceId(profile.workspace_id);
         if (profile.phone) setUserPhone(profile.phone);
+      } else {
+        // 🔥 THE FIX 1: If the driver has no workspace_id in the database, stop the loader!
+        setLoading(false);
       }
     };
     checkSession();
   }, [router]);
 
   const fetchDeliveries = async () => {
-    if (!workspaceId) return;
+    if (!workspaceId) {
+      setLoading(false);
+      return;
+    }
+    
     try {
       const { data, error } = await supabase
         .from('orders')
         .select('*, customers(name)')
         .eq('user_id', workspaceId)
-        .eq('status', 'in_transit')
+        // 🔥 THE FIX 2: Show ALL active orders (pending, in_transit) by filtering out 'fulfilled'
+        .neq('status', 'fulfilled') 
         .order('created_at', { ascending: true });
 
       if (!error && data) setDeliveries(data as Order[]);
     } catch (err) {
       console.error(err);
     } finally {
-      // 🚀 THE FIX: Force loading state to turn off once the network request completes
       setLoading(false);
     }
   };
@@ -234,6 +241,14 @@ export default function DriverApp() {
       <main className="flex-1 overflow-y-auto p-4 space-y-4">
         {loading ? (
           <div className="text-center text-sm font-bold opacity-50 py-10 animate-pulse">SYNCING DISPATCH...</div>
+        ) : !workspaceId ? (
+          <div className="text-center py-20 px-6">
+            <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4 ${isDarkMode ? 'bg-rose-900/30 text-rose-500' : 'bg-rose-100 text-rose-600'}`}>
+              <X size={32} />
+            </div>
+            <h3 className="text-lg font-bold text-rose-500 mb-2">Workspace Unlinked</h3>
+            <p className="text-sm opacity-70">Your driver account has not been assigned to a workspace. Please contact your administrator.</p>
+          </div>
         ) : displayOrders.length === 0 ? (
           <div className="text-center py-20">
             <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4 ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-indigo-100 text-indigo-400'}`}>
