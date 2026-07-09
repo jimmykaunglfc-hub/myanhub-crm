@@ -1,12 +1,12 @@
 "use client";
 
-import { formatNumber, formatCurrency } from '../../lib/formatters';
+import { formatCurrency } from '../../lib/formatters';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { 
-  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone
+  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab
 } from 'lucide-react';
 
 interface Order {
@@ -39,53 +39,83 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // THE FIX: One single, guaranteed initialization flow
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error || !session) {
-        router.replace('/login');
-        return;
-      }
-      setUserId(session.user.id);
-      
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('workspace_id, phone')
-        .eq('id', session.user.id)
-        .single();
+    let isMounted = true;
+
+    // Failsafe: Turn off loader after 3 seconds no matter what
+    const failsafe = setTimeout(() => {
+      if (isMounted) setLoading(false);
+    }, 3000);
+
+    const initializeApp = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session) {
+          router.replace('/login');
+          return;
+        }
         
-      if (profile) {
-        // Rolled back logic: If workspace_id is null (e.g. CRM Owner), use their own ID
-        setWorkspaceId(profile.workspace_id || session.user.id);
-        if (profile.phone) setUserPhone(profile.phone);
-      } else {
-        setWorkspaceId(session.user.id);
+        if (isMounted) setUserId(session.user.id);
+        
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('workspace_id, phone')
+          .eq('id', session.user.id)
+          .single();
+          
+        const activeWorkspaceId = profile?.workspace_id || session.user.id;
+        
+        if (isMounted) {
+          setWorkspaceId(activeWorkspaceId);
+          if (profile?.phone) setUserPhone(profile.phone);
+        }
+
+        // Fetch deliveries immediately using the resolved workspace ID
+        const { data: ordersData, error: ordersError } = await supabase
+          .from('orders')
+          .select('*, customers(name)')
+          .eq('user_id', activeWorkspaceId)
+          .neq('status', 'fulfilled') // 🚀 Show ALL active orders (pending, in_transit, etc.)
+          .order('created_at', { ascending: true });
+
+        if (!ordersError && ordersData && isMounted) {
+          setDeliveries(ordersData as Order[]);
+        }
+      } catch (err) {
+        console.error("Driver App Init Error:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+        clearTimeout(failsafe);
       }
     };
-    checkSession();
+    
+    initializeApp();
+
+    return () => { isMounted = false; clearTimeout(failsafe); };
   }, [router]);
 
-  const fetchDeliveries = async () => {
-    if (!workspaceId) {
-      setLoading(false);
-      return;
-    }
+  // Real-time updates
+  useEffect(() => {
+    if (!workspaceId) return;
     
-    try {
-      const { data, error } = await supabase
+    const refreshDeliveries = async () => {
+      const { data } = await supabase
         .from('orders')
         .select('*, customers(name)')
         .eq('user_id', workspaceId)
-        .eq('status', 'in_transit') // 🚀 REVERTED: Now matches your CRM's exact status push
+        .neq('status', 'fulfilled')
         .order('created_at', { ascending: true });
+        
+      if (data) setDeliveries(data as Order[]);
+    };
 
-      if (!error && data) setDeliveries(data as Order[]);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false); 
-    }
-  };
+    const channel = supabase.channel('live-driver-orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, refreshDeliveries)
+      .subscribe();
+      
+    return () => { supabase.removeChannel(channel); };
+  }, [workspaceId]);
 
   // -------------------------------------------------------------
   // AUTOMATED TRACKING NOTIFICATION ENGINE 
@@ -136,7 +166,9 @@ export default function DriverApp() {
 
     if (error) {
       alert("Failed to claim order. Check connection.");
-      fetchDeliveries(); 
+      // Soft refresh on failure
+      const { data } = await supabase.from('orders').select('*, customers(name)').eq('user_id', workspaceId!).neq('status', 'fulfilled').order('created_at', { ascending: true });
+      if (data) setDeliveries(data as Order[]);
     } else {
       sendOrderNotification(order, 'assigned'); 
     }
@@ -150,7 +182,6 @@ export default function DriverApp() {
     
     if (error) {
       alert("Failed to update progress.");
-      fetchDeliveries(); 
     } else {
       const targetOrder = deliveries.find(o => o.id === orderId);
       if (targetOrder) sendOrderNotification(targetOrder, newState);
@@ -189,7 +220,6 @@ export default function DriverApp() {
       setEvidenceFile(null);
     } catch (error: any) {
       alert(`Delivery failed: ${error.message}`);
-      fetchDeliveries(); 
     } finally {
       setIsSubmitting(false);
     }
