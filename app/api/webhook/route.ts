@@ -17,13 +17,11 @@ export async function GET(req: NextRequest) {
 
   const VERIFY_TOKEN = "myanhub_secure_webhook";
 
-  // If Facebook sends the correct password, we echo back the challenge number
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
     console.log('✅ FACEBOOK WEBHOOK VERIFIED!');
     return new NextResponse(challenge, { status: 200 });
   }
 
-  // If someone else tries to ping it, we reject them
   return new NextResponse('Forbidden', { status: 403 });
 }
 
@@ -34,18 +32,13 @@ export async function POST(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${url.protocol}//${url.host}`;
-
-    // 🚀 CRITICAL: Read payload stream immediately before returning the response
     const payload = await req.json();
 
-    // 🔥 THE X-RAY LOGGER
     console.log("🔥 INCOMING PAYLOAD RECEIVED:", JSON.stringify(payload, null, 2));
 
-    // 🚀 OFFLOAD HEAVY LIFTING TO BACKGROUND TASK
-    // Everything in this block executes AFTER the 200 OK response has been dispatched
     after(async () => {
       try {
-        let userId = url.searchParams.get('userId'); // Might be null for Facebook
+        let userId = url.searchParams.get('userId'); 
         let text = '';
         let platform = '';
         let fallbackName = '';
@@ -57,7 +50,6 @@ export async function POST(req: NextRequest) {
           const entry = payload.entry[0];
           const pageId = entry.id;
           
-          // SMART ROUTING: Map the Facebook Page ID to the MyanHub Workspace User
           if (!userId && pageId) {
             const { data: activeIntegration } = await supabase
               .from('workspace_integrations')
@@ -70,7 +62,6 @@ export async function POST(req: NextRequest) {
             if (activeIntegration) {
               userId = activeIntegration.user_id;
             } else {
-              // Fallback just in case external_account_id is missing
               const { data: fallbackIntegration } = await supabase
                 .from('workspace_integrations')
                 .select('user_id')
@@ -84,7 +75,6 @@ export async function POST(req: NextRequest) {
           if (!entry.messaging || entry.messaging.length === 0) return;
           const event = entry.messaging[0];
           
-          // Ignore messages sent by the page itself (echoes)
           if (event.message?.is_echo) return;
           if (!event.message || !event.message.text) return;
           
@@ -92,19 +82,21 @@ export async function POST(req: NextRequest) {
           text = event.message.text;
           externalId = event.sender.id;
           
-          // WORKAROUND: Create a unique dynamic name using their unique ID
           fallbackName = `FB User #${externalId.slice(-5)}`;
           socialLink = `https://facebook.com/${externalId}`;
 
-          // Try to fetch real name if we successfully mapped the userId
           if (userId) {
             try {
-              const { data: integration } = await supabase
+              // 🚀 FIXED: Match specific Facebook Page to prevent cross-talk between multiple accounts
+              const { data: integrationData } = await supabase
                 .from('workspace_integrations')
                 .select('token')
                 .eq('user_id', userId)
                 .eq('channel', 'facebook')
-                .single();
+                .eq('external_account_id', pageId)
+                .limit(1);
+
+              const integration = integrationData?.[0];
 
               if (integration?.token) {
                 const fbProfileRes = await fetch(`https://graph.facebook.com/v20.0/${externalId}?fields=first_name,last_name&access_token=${integration.token}`);
@@ -133,12 +125,10 @@ export async function POST(req: NextRequest) {
           fallbackName = payload.message.from.first_name || 'Telegram Lead';
           socialLink = `tg://user?id=${externalId}`;
         } 
-        // --- IGNORE UNKNOWN FORMATS ---
         else {
           return;
         }
 
-        // SECURITY CHECK: Now we reject if we STILL don't have a userId after smart routing
         if (!userId) {
           console.log("❌ REJECTED: Could not map incoming payload to any MyanHub userId.");
           return;
@@ -159,7 +149,6 @@ export async function POST(req: NextRequest) {
         if (existingCustomer) {
           customerId = existingCustomer.id;
           
-          // Upgrade them if they are currently stuck as a generic "Facebook Lead"
           if (existingCustomer.name === 'Facebook Lead' || (existingCustomer.name.startsWith('FB User #') && !fallbackName.startsWith('FB User #'))) {
             await supabase.from('customers').update({ name: fallbackName, social_profile_link: socialLink }).eq('id', customerId);
           } else {
@@ -172,7 +161,6 @@ export async function POST(req: NextRequest) {
 
         // 2. Save Customer's Message & Auto-Reopen Chat
         if (customerId) {
-          // A. Save the actual message to the database
           await supabase.from('messages').insert({ 
             customer_id: customerId, 
             sender: 'customer', 
@@ -181,8 +169,6 @@ export async function POST(req: NextRequest) {
             user_id: userId 
           });
 
-          // B. THE AUTO-REOPEN FIX: 
-          // Update the customer's profile using the correct 'chat_status' column
           await supabase.from('customers')
             .update({ chat_status: 'active' })
             .eq('id', customerId);
@@ -199,18 +185,16 @@ export async function POST(req: NextRequest) {
           const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', userId);
           const stockContext = inventory?.map(i => `- ${i.name} (Stock: ${i.stock_quantity}, Price: ${i.price} ${profile.currency_code})`).join('\n') || 'No items available.';
 
-          // 🚀 FIX: Fetch recent conversation history from the database to cure AI "amnesia"
           const { data: historyLogs } = await supabase
             .from('messages')
             .select('content, sender')
             .eq('customer_id', customerId)
             .order('created_at', { ascending: false })
-            .limit(6); // Grab the last 6 messages
+            .limit(6); 
 
-          let conversationMemory = `Customer: "${text}"`; // Fallback just in case
+          let conversationMemory = `Customer: "${text}"`; 
           
           if (historyLogs && historyLogs.length > 0) {
-            // Reverse it so it reads chronologically from oldest to newest (newest being the current message)
             conversationMemory = historyLogs
               .reverse()
               .map(log => `${log.sender === 'customer' ? 'Customer' : 'Store Assistant'}: ${log.content.replace('🤖 ', '')}`)
@@ -230,7 +214,6 @@ export async function POST(req: NextRequest) {
             __ORDER__ {"itemName": "[Exact Name from Inventory]", "qty": [Number], "address": "[Address from chat]", "phone": "[Phone from chat]"}
           `;
 
-          // 🚀 Inject the full conversation history instead of just the single text string
           const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
             method: 'POST', 
             headers: { 'Content-Type': 'application/json' },
@@ -282,7 +265,6 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    // 🚀 INSTANT RESPONSE SENT HERE (Locks 200 OK immediately)
     return NextResponse.json({ success: true });
     
   } catch (error: any) {

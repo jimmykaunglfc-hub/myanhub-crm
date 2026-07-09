@@ -28,20 +28,22 @@ export async function POST(request: Request) {
     const platform = customer.platform;
 
     // 2. Fetch the saved token dynamically based on the customer's platform
-    const { data: integration, error: integrationErr } = await supabaseAdmin
+    // 🚀 FIXED: Replaced .single() with .limit(1) to prevent crashes when multiple accounts exist for the same channel
+    const { data: integrations, error: integrationErr } = await supabaseAdmin
       .from('workspace_integrations')
       .select('token')
       .eq('user_id', userId)
       .eq('channel', platform)
-      .single();
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-    if (integrationErr || !integration?.token) {
+    if (integrationErr || !integrations || integrations.length === 0) {
       return NextResponse.json({ 
         error: `${platform.toUpperCase()} integration lookup failed. Verify your row matches user_id: ${userId}` 
       }, { status: 404 });
     }
 
-    const botToken = integration.token;
+    const botToken = integrations[0].token;
     const rawLink = customer.social_profile_link.trim();
 
     // ==========================================
@@ -102,8 +104,6 @@ export async function POST(request: Request) {
           type: "image",
           payload: { url: mediaUrl, is_reusable: true }
         };
-        // If there's text with the image, Facebook requires it sent as a separate message payload usually,
-        // but for safety, we'll ensure basic text fallback for the integration block.
       } else {
         payload.message.text = text;
       }
