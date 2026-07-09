@@ -33,8 +33,6 @@ export default function Dashboard() {
   const { isDarkMode } = useTheme();
   
   const [userId, setUserId] = useState<string | null>(null);
-  
-  // NEW: Dynamic Currency State
   const [workspaceCurrency, setWorkspaceCurrency] = useState('USD');
   
   const [loading, setLoading] = useState(true);
@@ -62,7 +60,6 @@ export default function Dashboard() {
       if (user) {
         setUserId(user.id);
         
-        // Fetch the active currency from the Settings
         const { data: profile } = await supabase.from('profiles').select('currency_code').eq('id', user.id).single();
         if (profile?.currency_code) {
           setWorkspaceCurrency(profile.currency_code);
@@ -83,7 +80,6 @@ export default function Dashboard() {
       .order('created_at', { ascending: false });
 
     if (rawOrders) {
-      // Safely cast the raw data to our explicit Order type
       const orders = rawOrders as unknown as Order[];
       setRecentOrders(orders.slice(0, 5));
       
@@ -104,7 +100,6 @@ export default function Dashboard() {
       .order('created_at', { ascending: false });
 
     if (rawMessages) {
-      // Safely cast the raw data to our explicit Message type
       const messages = rawMessages as unknown as Message[];
 
       const unread = messages.filter(m => m.status === 'unread' && m.sender === 'customer').length;
@@ -165,58 +160,58 @@ export default function Dashboard() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
               {/* Sales Card */}
-              <div className={`p-6 rounded-2xl border shadow-sm transition-colors min-w-0 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+              <div className={`p-6 rounded-2xl border shadow-sm transition-colors overflow-hidden ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                 <div className="flex justify-between items-center mb-4">
-                  <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Sales Today</span>
+                  <span className={`text-xs font-bold uppercase tracking-wider truncate mr-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Sales Today</span>
                   <div className={`p-2 rounded-lg flex-shrink-0 ${isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}><TrendingUp size={16} /></div>
                 </div>
-                {/* 🚀 FIXED: Added truncate, responsive sizing, and hover title tooltips */}
-                <div className="text-2xl lg:text-3xl font-black truncate" title={formatCurrency(salesToday, workspaceCurrency)}>
+                {/* 🚀 HARDENED: Forced block, full width, truncation, and scaled typography */}
+                <div className="text-2xl xl:text-3xl font-black block w-full truncate" title={formatCurrency(salesToday, workspaceCurrency)}>
                   {formatCurrency(salesToday, workspaceCurrency)}
                 </div>
-                <div className="text-xs text-emerald-500 font-medium mt-2 flex items-center gap-1">
+                <div className="text-xs text-emerald-500 font-medium mt-2 flex items-center gap-1 truncate">
                   Live calculation
                 </div>
               </div>
 
               {/* Unread Messages Card */}
-              <div className={`p-6 rounded-2xl shadow-md transition-colors min-w-0 ${unreadCount > 0 ? 'bg-indigo-600 text-white border-indigo-500' : (isDarkMode ? 'bg-slate-900 border-slate-800 border shadow-sm' : 'bg-white border-slate-200 border shadow-sm')}`}>
+              <div className={`p-6 rounded-2xl shadow-md transition-colors overflow-hidden ${unreadCount > 0 ? 'bg-indigo-600 text-white border-indigo-500' : (isDarkMode ? 'bg-slate-900 border-slate-800 border shadow-sm' : 'bg-white border-slate-200 border shadow-sm')}`}>
                 <div className="flex justify-between items-center mb-4">
-                  <span className={`text-xs font-bold uppercase tracking-wider ${unreadCount > 0 ? 'text-indigo-200' : (isDarkMode ? 'text-slate-400' : 'text-slate-500')}`}>Unread Messages</span>
+                  <span className={`text-xs font-bold uppercase tracking-wider truncate mr-2 ${unreadCount > 0 ? 'text-indigo-200' : (isDarkMode ? 'text-slate-400' : 'text-slate-500')}`}>Unread Messages</span>
                   <div className={`p-2 rounded-lg flex-shrink-0 ${unreadCount > 0 ? 'bg-indigo-500/50 text-white' : (isDarkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-50 text-indigo-600')}`}><MessageSquare size={16} /></div>
                 </div>
-                <div className="text-2xl lg:text-3xl font-black truncate" title={formatNumber(unreadCount)}>
+                <div className="text-2xl xl:text-3xl font-black block w-full truncate" title={formatNumber(unreadCount)}>
                   {formatNumber(unreadCount)}
                 </div>
-                <div className={`text-xs font-medium mt-2 flex items-center gap-1 ${unreadCount > 0 ? 'text-indigo-200' : (isDarkMode ? 'text-slate-500' : 'text-slate-400')}`}>
+                <div className={`text-xs font-medium mt-2 flex items-center gap-1 truncate ${unreadCount > 0 ? 'text-indigo-200' : (isDarkMode ? 'text-slate-500' : 'text-slate-400')}`}>
                   {unreadCount > 0 ? 'Action required' : 'Inbox zero achieved'}
                 </div>
               </div>
 
               {/* Active Orders Card */}
-              <div className={`p-6 rounded-2xl border shadow-sm transition-colors min-w-0 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+              <div className={`p-6 rounded-2xl border shadow-sm transition-colors overflow-hidden ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                 <div className="flex justify-between items-center mb-4">
-                  <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Active Orders</span>
+                  <span className={`text-xs font-bold uppercase tracking-wider truncate mr-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Active Orders</span>
                   <div className={`p-2 rounded-lg flex-shrink-0 ${isDarkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600'}`}><ShoppingBag size={16} /></div>
                 </div>
-                <div className="text-2xl lg:text-3xl font-black truncate" title={formatNumber(activeOrdersCount)}>
+                <div className="text-2xl xl:text-3xl font-black block w-full truncate" title={formatNumber(activeOrdersCount)}>
                   {formatNumber(activeOrdersCount)}
                 </div>
-                <div className="text-xs text-amber-500 font-medium mt-2 flex items-center gap-1">
+                <div className="text-xs text-amber-500 font-medium mt-2 flex items-center gap-1 truncate">
                   Pending fulfillment
                 </div>
               </div>
 
               {/* New Customers Card */}
-              <div className={`p-6 rounded-2xl border shadow-sm transition-colors min-w-0 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+              <div className={`p-6 rounded-2xl border shadow-sm transition-colors overflow-hidden ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                 <div className="flex justify-between items-center mb-4">
-                  <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Customers</span>
+                  <span className={`text-xs font-bold uppercase tracking-wider truncate mr-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Customers</span>
                   <div className={`p-2 rounded-lg flex-shrink-0 ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}><Users size={16} /></div>
                 </div>
-                <div className="text-2xl lg:text-3xl font-black truncate" title={formatNumber(newCustomersCount)}>
+                <div className="text-2xl xl:text-3xl font-black block w-full truncate" title={formatNumber(newCustomersCount)}>
                   {formatNumber(newCustomersCount)}
                 </div>
-                <div className={`text-xs font-medium mt-2 flex items-center gap-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                <div className={`text-xs font-medium mt-2 flex items-center gap-1 truncate ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
                   Saved in CRM directory
                 </div>
               </div>
@@ -278,7 +273,7 @@ export default function Dashboard() {
                   ) : (
                     recentOrders.map((order) => (
                       <div key={order.id} className={`p-4 flex justify-between items-center transition-colors ${isDarkMode ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-4 min-w-0">
                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center border flex-shrink-0 ${isDarkMode ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
                             <CheckCircle2 size={20} />
                           </div>
