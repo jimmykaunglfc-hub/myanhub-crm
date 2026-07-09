@@ -5,514 +5,416 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
-import Sidebar from '../components/Sidebar';
-import Header from '../components/Header';
 import { 
-  Clock, Package, Truck, CheckCircle2, Trash2, Calendar, 
-  Receipt, Image as ImageIcon, UserCircle, Globe, Link as LinkIcon, X,
-  Edit, Printer, FileText, MapPin, Phone
+  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone, Edit2, Save
 } from 'lucide-react';
 
 interface Order {
   id: string;
   order_id_string: string;
   total_amount: number;
-  status: 'pending' | 'processing' | 'in_transit' | 'fulfilled';
+  status: string;
+  payment_status: string;
   delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
   assigned_driver_id: string | null;
-  payment_status: string | null;
-  delivery_evidence_url: string | null;
-  is_external_delivery: boolean;
-  courier_name: string | null;
-  tracking_url: string | null;
-  contact_phone: string | null;
-  delivery_address: string | null;
-  internal_notes: string | null;
   created_at: string;
-  customer_id: string;
-  customers: { name: string } | null;
+  customer_id: string; 
+  delivery_address?: string | null;
+  contact_phone?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  customers: { 
+    name: string;
+    phone?: string | null;
+    address?: string | null;
+  } | null;
 }
 
-interface Driver { id: string; full_name: string; phone: string | null; }
-
-const COLUMNS = [
-  { id: 'pending', title: 'PENDING', icon: <Clock size={16} className="text-amber-500" />, bg: 'bg-amber-500', border: 'border-amber-500' },
-  { id: 'processing', title: 'PROCESSING', icon: <Package size={16} className="text-indigo-500" />, bg: 'bg-indigo-500', border: 'border-indigo-500' },
-  { id: 'in_transit', title: 'IN TRANSIT', icon: <Truck size={16} className="text-blue-500" />, bg: 'bg-blue-500', border: 'border-blue-500' },
-  { id: 'fulfilled', title: 'DELIVERED', icon: <CheckCircle2 size={16} className="text-emerald-500" />, bg: 'bg-emerald-500', border: 'border-emerald-500' },
-];
-
-export default function OrdersPipeline() {
+export default function DriverApp() {
   const { isDarkMode } = useTheme();
   const router = useRouter();
   
+  // App States
   const [userId, setUserId] = useState<string | null>(null);
-  const [workspaceCurrency, setWorkspaceCurrency] = useState('USD');
-  
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [userPhone, setUserPhone] = useState<string>('');
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [deliveries, setDeliveries] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'pool' | 'my_route'>('my_route');
 
-  // External Courier Active States
-  const [activeExternalInput, setActiveExternalInput] = useState<string | null>(null);
-  const [courierName, setCourierName] = useState('');
-  const [trackingUrl, setTrackingUrl] = useState('');
+  // Phone Editing States
+  const [isEditingPhone, setIsEditingPhone] = useState(false);
+  const [phoneInputValue, setPhoneInputValue] = useState('');
+  const [isSavingPhone, setIsSavingPhone] = useState(false);
 
-  // Photo Preview State
-  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+  // Delivery Modal States
+  const [activeDelivery, setActiveDelivery] = useState<Order | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState('Cash Received');
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // ORDER MANAGEMENT MODAL STATES
-  const [manageModalOpen, setManageModalOpen] = useState(false);
-  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
-  const [editPhone, setEditPhone] = useState('');
-  const [editAddress, setEditAddress] = useState('');
-  const [editNotes, setEditNotes] = useState('');
-  const [editSaving, setEditSaving] = useState(false);
+  const fetchDeliveries = async (targetWorkspaceId: string) => {
+    if (!targetWorkspaceId) return;
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, customers(name)')
+        .eq('user_id', targetWorkspaceId)
+        .eq('status', 'in_transit')
+        .order('created_at', { ascending: true });
+
+      if (!error && data) setDeliveries(data as unknown as Order[]);
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error || !session) { router.replace('/login'); return; }
-      setUserId(session.user.id);
-      
-      const { data: profile } = await supabase.from('profiles').select('currency_code').eq('id', session.user.id).single();
-      if (profile?.currency_code) setWorkspaceCurrency(profile.currency_code);
+    const initializeApp = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session) {
+          router.replace('/login');
+          return;
+        }
+        
+        setUserId(session.user.id);
+        
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('workspace_id, phone')
+          .eq('id', session.user.id)
+          .single();
+        
+        const activeWorkspaceId = profile?.workspace_id || session.user.id;
+        setWorkspaceId(activeWorkspaceId);
+        if (profile?.phone) {
+          setUserPhone(profile.phone);
+          setPhoneInputValue(profile.phone);
+        }
+
+        await fetchDeliveries(activeWorkspaceId);
+      } catch (err: any) {
+        setLoading(false);
+      }
     };
-    checkSession();
+
+    initializeApp();
   }, [router]);
 
-  const fetchDashboardData = async () => {
-    if (!userId) return;
-    const { data: orderData } = await supabase.from('orders').select('*, customers(name)').eq('user_id', userId).order('created_at', { ascending: false });
-    const { data: driverData } = await supabase.from('profiles').select('id, full_name, phone').eq('workspace_id', userId).eq('role', 'driver');
-
-    if (orderData) setOrders(orderData as Order[]);
-    if (driverData) setDrivers(driverData as Driver[]);
-    setLoading(false);
-  };
-
-  useEffect(() => { if (userId) fetchDashboardData(); }, [userId]);
-  
   useEffect(() => {
-    if (!userId) return;
-    const channel = supabase.channel('live-orders').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchDashboardData).subscribe();
+    if (!workspaceId) return;
+    const channel = supabase.channel('live-driver-orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        if (workspaceId) fetchDeliveries(workspaceId);
+      })
+      .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [userId]);
+  }, [workspaceId]);
 
-
-  // -------------------------------------------------------------
-  // AUTOMATED TRACKING NOTIFICATION ENGINE
-  // -------------------------------------------------------------
+  // 🚀 FIXED: Added explicit error catching and browser alerts for gateway visibility
   const sendOrderNotification = async (order: Order, newStatus: string) => {
+    if (!workspaceId) return; 
+
     let notificationText = '';
+    const activeDriverPhone = phoneInputValue || userPhone || 'N/A';
     
-    if (newStatus === 'processing') {
-      notificationText = `📦 Order Update: Great news! Your order ${order.order_id_string} is now being processed and packed by our team.`;
-    } else if (newStatus === 'in_transit') {
-      notificationText = `🚚 Order Update: Your order ${order.order_id_string} is currently in transit and heading your way!`;
-    } else if (newStatus === 'fulfilled') {
-      notificationText = `✅ Order Delivered: Your order ${order.order_id_string} has been successfully delivered. Thank you for shopping with us!`;
+    if (newStatus === 'assigned') {
+      notificationText = `🚚 Order Update: Great news! Your order ${order.order_id_string} has been assigned to our driver. You can contact them at: ${activeDriverPhone}`;
+    } else if (newStatus === 'picked_up') {
+      notificationText = `🚚 Order Update: Your order ${order.order_id_string} is currently in transit and heading your way! Driver contact number: ${activeDriverPhone}`;
+    } else if (newStatus === 'arrived') {
+      notificationText = `📍 Driver Arrived: Our driver is at your location with order ${order.order_id_string}. Please be ready to receive it!`;
+    } else if (newStatus === 'delivered') {
+      notificationText = `✅ Order Delivered: Your order ${order.order_id_string} has been successfully delivered. Thank you!`;
     }
 
-    if (!notificationText || !userId) return;
+    if (!notificationText) return;
 
-    await supabase.from('messages').insert({
-      customer_id: order.customer_id, sender: 'Workspace Manager',
-      content: `[System Notification] Auto-Ping: ${notificationText}`, status: 'read', user_id: userId
-    });
+    try {
+      const res = await fetch('/api/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: order.customer_id, text: notificationText, userId: workspaceId })
+      });
 
-    fetch('/api/send-message', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerId: order.customer_id, text: notificationText, userId })
-    }).catch(err => console.error("Tracking notification failed to send.", err));
+      // 🚨 EXPOSE THE CULPRIT: If the server returns an error code, display it immediately
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        alert(`Message Route Blocked: ${errorData.error || 'Server rejected request'}`);
+      }
+    } catch (err: any) {
+      alert(`Network connection dropped: ${err.message}`);
+    }
   };
 
+  const handleUpdatePhone = async () => {
+    if (!userId) return;
+    setIsSavingPhone(true);
 
-  // -------------------------------------------------------------
-  // DRAG & DROP LOGIC
-  // -------------------------------------------------------------
-  const handleDragStart = (e: React.DragEvent, orderId: string) => { e.dataTransfer.setData('orderId', orderId); };
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
+    const { error } = await supabase
+      .from('profiles')
+      .update({ phone: phoneInputValue })
+      .eq('id', userId);
 
-  const handleDrop = async (e: React.DragEvent, newStatus: string) => {
-    e.preventDefault();
-    const orderId = e.dataTransfer.getData('orderId');
-    if (!orderId) return;
-
-    if (newStatus === 'fulfilled') {
-      alert("Notice: Orders must be marked as Delivered by the internal Driver app, or manually updated if External.");
-      return;
+    setIsSavingPhone(false);
+    if (!error) {
+      setUserPhone(phoneInputValue);
+      setIsEditingPhone(false);
+    } else {
+      alert("Failed to save telephone settings. Check connectivity.");
     }
+  };
 
-    const targetOrder = orders.find(o => o.id === orderId);
+  const claimOrder = async (orderId: string) => {
+    if (!userId) return;
+    
+    const targetOrder = deliveries.find(o => o.id === orderId);
     if (!targetOrder) return;
 
-    let updates: any = { status: newStatus };
-    if (newStatus === 'in_transit') {
-      updates.delivery_state = 'unassigned';
-      updates.assigned_driver_id = null;
-    }
+    setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
+    setActiveTab('my_route');
 
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updates } : o));
-    await supabase.from('orders').update(updates).eq('id', orderId);
+    const { error } = await supabase.from('orders').update({ 
+      assigned_driver_id: userId, 
+      delivery_state: 'assigned' 
+    }).eq('id', orderId);
 
-    if (targetOrder.status !== newStatus) {
-      sendOrderNotification(targetOrder, newStatus);
+    if (!error) {
+      sendOrderNotification(targetOrder, 'assigned');
+    } else {
+      alert(`Failed to claim route database record: ${error.message}`);
+      if (workspaceId) fetchDeliveries(workspaceId);
     }
   };
 
-  // -------------------------------------------------------------
-  // DISPATCH CONTROLS
-  // -------------------------------------------------------------
-  const handleAssignInternalDriver = async (orderId: string, driverId: string) => {
-    if (!driverId) return;
+  const advanceProgress = async (orderId: string, newState: string) => {
+    const targetOrder = deliveries.find(o => o.id === orderId);
+    if (!targetOrder) return;
 
-    await supabase.from('orders').update({ assigned_driver_id: driverId, delivery_state: 'assigned', is_external_delivery: false }).eq('id', orderId);
+    setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, delivery_state: newState as any } : o));
     
-    const targetOrder = orders.find(o => o.id === orderId);
-    const assignedDriver = drivers.find(d => d.id === driverId);
-    if (targetOrder && assignedDriver && userId) {
-      const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been assigned to our driver, ${assignedDriver.full_name}, and will be dispatched soon! Driver contact number: ${assignedDriver.phone || 'N/A'}`;
-      
-      await supabase.from('messages').insert({
-        customer_id: targetOrder.customer_id, sender: 'Workspace Manager',
-        content: `[System Notification] Auto-Ping: ${text}`, status: 'read', user_id: userId
-      });
-
-      fetch('/api/send-message', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId: targetOrder.customer_id, text, userId })
-      });
+    const { error } = await supabase.from('orders').update({ delivery_state: newState }).eq('id', orderId);
+    
+    if (!error) {
+      sendOrderNotification(targetOrder, newState);
+    } else {
+      alert(`Database rejected status transition: ${error.message}`);
     }
   };
 
-  const handleAssignExternalCourier = async (orderId: string) => {
-    if (!courierName) return alert("Please enter a courier name (e.g. DHL).");
-    await supabase.from('orders').update({ is_external_delivery: true, courier_name: courierName, tracking_url: trackingUrl, delivery_state: 'assigned' }).eq('id', orderId);
-    
-    const targetOrder = orders.find(o => o.id === orderId);
-    if (targetOrder && userId) {
-      const text = `🚚 Order Update: Your order ${targetOrder.order_id_string} has been dispatched via ${courierName}.${trackingUrl ? ` Track your package here: ${trackingUrl}` : ''}`;
-      
-      await supabase.from('messages').insert({
-        customer_id: targetOrder.customer_id, sender: 'Workspace Manager',
-        content: `[System Notification] Auto-Ping: ${text}`, status: 'read', user_id: userId
-      });
-
-      fetch('/api/send-message', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId: targetOrder.customer_id, text, userId })
-      });
-    }
-    
-    setActiveExternalInput(null); setCourierName(''); setTrackingUrl('');
-  };
-
-  const markExternalDelivered = async (orderId: string) => {
-    await supabase.from('orders').update({ status: 'fulfilled', delivery_state: 'delivered', payment_status: 'Already Paid (Online)' }).eq('id', orderId);
-    
-    const targetOrder = orders.find(o => o.id === orderId);
-    if (targetOrder) {
-      sendOrderNotification(targetOrder, 'fulfilled');
-    }
-  };
-
-  const handleDeleteOrder = async (orderId: string) => {
-    if (!confirm("CRITICAL: Are you sure you want to permanently delete this order?")) return;
-    await supabase.from('orders').delete().eq('id', orderId);
-    setOrders(prev => prev.filter(o => o.id !== orderId));
-    setManageModalOpen(false); 
-  };
-
-  const openManageModal = (order: Order) => {
-    setEditingOrder(order);
-    setEditPhone(order.contact_phone || '');
-    setEditAddress(order.delivery_address || '');
-    setEditNotes(order.internal_notes || '');
-    setManageModalOpen(true);
-  };
-
-  const handleSaveOrderDetails = async (e: React.FormEvent) => {
+  const submitDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingOrder) return;
-    setEditSaving(true);
+    if (!activeDelivery) return;
+    setIsSubmitting(true);
 
-    const updates = { contact_phone: editPhone, delivery_address: editAddress, internal_notes: editNotes };
-    setOrders(prev => prev.map(o => o.id === editingOrder.id ? { ...o, ...updates } : o));
-    const { error } = await supabase.from('orders').update(updates).eq('id', editingOrder.id);
-    
-    setEditSaving(false);
-    if (error) { alert(`Save failed: ${error.message}`); fetchDashboardData(); } 
-    else { setManageModalOpen(false); }
-  };
+    try {
+      let uploadedUrl = null;
+      if (evidenceFile) {
+        const fileExt = evidenceFile.name.split('.').pop();
+        const fileName = `delivery-${activeDelivery.id}-${Math.random()}.${fileExt}`;
+        await supabase.storage.from('delivery_evidence').upload(fileName, evidenceFile);
+        const { data: { publicUrl } } = supabase.storage.from('delivery_evidence').getPublicUrl(fileName);
+        uploadedUrl = publicUrl;
+      }
 
-  const handlePrintSlip = (order: Order) => {
-    const printContent = `
-      <html>
-        <head>
-          <title>Packing Slip - ${order.order_id_string}</title>
-          <style>
-            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #111; line-height: 1.6; }
-            .header { border-bottom: 3px solid #000; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-end; }
-            .header h1 { margin: 0; font-size: 32px; letter-spacing: -1px; }
-            .header h2 { margin: 0; color: #666; font-size: 14px; text-transform: uppercase; letter-spacing: 2px; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 40px; }
-            .box { border: 1px solid #ddd; padding: 20px; border-radius: 8px; }
-            .box h3 { margin-top: 0; font-size: 12px; color: #888; text-transform: uppercase; margin-bottom: 10px; }
-            .data { font-size: 16px; font-weight: bold; margin: 0; }
-            .notes-box { background: #f9f9f9; padding: 20px; border-left: 4px solid #000; margin-top: 30px; }
-            .footer { margin-top: 60px; text-align: center; font-size: 12px; color: #888; border-top: 1px solid #eee; padding-top: 20px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div><h2>Official Packing Slip</h2><h1>${order.order_id_string}</h1></div>
-            <div style="text-align: right;"><h2>Date Generated</h2><p style="margin:0; font-weight:bold;">${new Date().toLocaleDateString()}</p></div>
-          </div>
-          <div class="grid">
-            <div class="box">
-              <h3>Deliver To</h3>
-              <p class="data">${order.customers?.name || 'Customer'}</p>
-              <p style="margin: 5px 0;">${order.delivery_address || 'No Address Provided'}</p>
-              <p style="margin: 5px 0;">📞 ${order.contact_phone || 'No Phone Provided'}</p>
-            </div>
-            <div class="box">
-              <h3>Order Details</h3>
-              <p style="margin: 5px 0;"><strong>Status:</strong> <span style="text-transform: uppercase;">${order.status}</span></p>
-              <p style="margin: 5px 0;"><strong>Payment Status:</strong> ${order.payment_status || 'Pending'}</p>
-              <p style="margin: 5px 0;"><strong>Total Value:</strong> ${formatCurrency(order.total_amount, workspaceCurrency)}</p>
-            </div>
-          </div>
-          ${order.internal_notes ? `<div class="notes-box"><h3 style="margin-top:0; font-size: 12px; color: #888; text-transform: uppercase;">Internal Fulfillment Remarks</h3><p style="margin:0; font-weight:bold; white-space: pre-wrap;">${order.internal_notes}</p></div>` : ''}
-          <div class="footer">Generated securely by MyanHub Logistics System.</div>
-        </body>
-      </html>
-    `;
+      setDeliveries(prev => prev.filter(o => o.id !== activeDelivery.id));
 
-    const printWindow = window.open('', '_blank', 'width=800,height=800');
-    if (printWindow) {
-      printWindow.document.write(printContent); printWindow.document.close(); printWindow.focus();
-      setTimeout(() => { printWindow.print(); printWindow.close(); }, 250);
+      await supabase.from('orders').update({ 
+        status: 'fulfilled',
+        delivery_state: 'delivered',
+        payment_status: paymentStatus,
+        delivery_evidence_url: uploadedUrl
+      }).eq('id', activeDelivery.id);
+
+      sendOrderNotification(activeDelivery, 'delivered');
+
+      setActiveDelivery(null);
+      setEvidenceFile(null);
+    } catch (error: any) {
+      alert(`Fulfillment Error: ${error.message}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
+  const poolOrders = deliveries.filter(o => !o.assigned_driver_id || o.delivery_state === 'unassigned');
+  const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
+  const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
+
   return (
-    <div className={`flex font-sans min-h-screen transition-colors duration-200 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
-      <Sidebar />
-      <main className="flex-1 md:ml-64 flex flex-col relative h-screen overflow-hidden">
-        <Header />
-        <div className="flex-1 overflow-hidden flex flex-col mt-16 p-4 md:p-8">
-          <div className="mb-6 flex-shrink-0">
-            <h2 className="text-2xl font-bold tracking-tight">Dispatch & Order Pipeline</h2>
-            <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Manage internal fleet routing, external courier tracking, and waybill printing.</p>
+    <div className={`min-h-screen font-sans flex flex-col pb-12 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
+      
+      <header className={`pt-12 pb-0 px-6 shadow-sm z-10 ${isDarkMode ? 'bg-slate-900' : 'bg-indigo-600 text-white'}`}>
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h1 className="text-xl font-black tracking-tight">Driver Portal</h1>
+            <p className="text-xs opacity-80 mt-0.5">{myRouteOrders.length} active stops on your route</p>
           </div>
-
-          {loading ? (
-            <div className="flex-1 flex items-center justify-center font-mono text-sm animate-pulse text-indigo-500">LOADING PIPELINE...</div>
-          ) : (
-            <div className="flex-1 flex gap-6 overflow-x-auto pb-4 custom-scrollbar">
-              {COLUMNS.map(column => {
-                const columnOrders = orders.filter(o => o.status === column.id);
-                return (
-                  <div key={column.id} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, column.id)} className={`flex flex-col w-80 flex-shrink-0 rounded-2xl border transition-colors ${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-100/50 border-slate-200'}`}>
-                    <div className={`p-4 flex items-center justify-between border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-                      <div className="flex items-center gap-2">{column.icon}<h3 className="text-xs font-black uppercase tracking-wider">{column.title}</h3></div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'}`}>{formatNumber(columnOrders.length)}</span>
-                    </div>
-
-                    <div className="flex-1 p-3 overflow-y-auto space-y-3">
-                      {columnOrders.map(order => (
-                        <div key={order.id} draggable={column.id !== 'fulfilled'} onDragStart={(e) => handleDragStart(e, order.id)} className={`relative p-4 rounded-xl border shadow-sm ${column.id !== 'fulfilled' ? 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5' : ''} transition-all ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
-                          
-                          <button 
-                            onClick={() => openManageModal(order)}
-                            className={`absolute top-3 right-3 p-1.5 rounded-lg transition-colors ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:text-indigo-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-500 hover:text-indigo-600 hover:bg-slate-200'}`}
-                            title="Manage Order Details"
-                          >
-                            <Edit size={14} />
-                          </button>
-
-                          <div className="flex justify-between items-start mb-3 pr-8">
-                            <div className="text-sm font-bold font-mono">{order.order_id_string}</div>
-                          </div>
-                          
-                          <div className="space-y-1.5 mb-4">
-                            <div className={`text-lg font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
-                              {formatCurrency(order.total_amount, workspaceCurrency)}
-                            </div>
-                            
-                            <div className="flex items-center gap-2 text-xs mt-2">
-                              <span className={`w-5 h-5 rounded flex items-center justify-center font-bold uppercase text-[10px] ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>{order.customers?.name?.charAt(0) || '?'}</span>
-                              <span className={`font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{order.customers?.name || 'Unknown Buyer'}</span>
-                            </div>
-                            
-                            {order.internal_notes && (
-                              <div className={`mt-2 text-[10px] font-bold px-2 py-1 rounded flex items-start gap-1.5 ${isDarkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-700'}`}>
-                                <FileText size={12} className="flex-shrink-0 mt-0.5" />
-                                <span className="line-clamp-2">{order.internal_notes}</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {column.id === 'in_transit' && (
-                            <div className={`mb-4 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                              {order.delivery_state === 'unassigned' && activeExternalInput !== order.id && (
-                                <div className="space-y-2">
-                                  <label className="text-[10px] font-bold uppercase text-amber-500 flex items-center gap-1"><UserCircle size={12}/> Internal Fleet</label>
-                                  <select onChange={(e) => handleAssignInternalDriver(order.id, e.target.value)} className={`w-full text-xs p-2 rounded border focus:outline-none mb-2 ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`}>
-                                    <option value="">-- Assign Driver --</option>
-                                    {drivers.map(d => <option key={d.id} value={d.id}>{d.full_name}</option>)}
-                                  </select>
-                                  
-                                  <div className="relative flex py-1 items-center"><div className="flex-grow border-t border-slate-300 dark:border-slate-700"></div><span className="flex-shrink-0 mx-2 text-[10px] uppercase text-slate-400 font-bold">OR</span><div className="flex-grow border-t border-slate-300 dark:border-slate-700"></div></div>
-                                  
-                                  <button onClick={() => setActiveExternalInput(order.id)} className={`w-full text-xs font-bold p-2 rounded border border-dashed transition-colors flex items-center justify-center gap-1.5 ${isDarkMode ? 'border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10' : 'border-indigo-300 text-indigo-600 hover:bg-indigo-50'}`}>
-                                    <Globe size={14}/> Use External Courier
-                                  </button>
-                                </div>
-                              )}
-
-                              {activeExternalInput === order.id && (
-                                <div className="space-y-2 animate-fade-in">
-                                  <input type="text" placeholder="Courier (e.g. FedEx)" value={courierName} onChange={e => setCourierName(e.target.value)} className={`w-full text-xs p-2 rounded border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`} />
-                                  <input type="text" placeholder="Tracking # or URL" value={trackingUrl} onChange={e => setTrackingUrl(e.target.value)} className={`w-full text-xs p-2 rounded border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`} />
-                                  <div className="flex gap-2 pt-1">
-                                    <button onClick={() => setActiveExternalInput(null)} className={`flex-1 text-[10px] font-bold p-2 rounded border ${isDarkMode ? 'border-slate-700 text-slate-400' : 'border-slate-300 text-slate-600'}`}>Cancel</button>
-                                    <button onClick={() => handleAssignExternalCourier(order.id)} className="flex-1 text-[10px] font-bold p-2 rounded bg-indigo-600 text-white hover:bg-indigo-700">Save Tracking</button>
-                                  </div>
-                                </div>
-                              )}
-
-                              {order.delivery_state !== 'unassigned' && !order.is_external_delivery && (
-                                <div>
-                                  <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-1.5"><span className="text-indigo-500 flex items-center gap-1"><UserCircle size={12}/> {drivers.find(d => d.id === order.assigned_driver_id)?.full_name || 'Driver'}</span><span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>{order.delivery_state.replace('_', ' ')}</span></div>
-                                  <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden"><div className={`h-full bg-indigo-500 transition-all ${order.delivery_state === 'assigned' ? 'w-1/3' : order.delivery_state === 'picked_up' ? 'w-2/3' : 'w-full'}`}></div></div>
-                                </div>
-                              )}
-
-                              {order.is_external_delivery && (
-                                <div>
-                                  <div className="flex justify-between items-center text-[10px] font-bold uppercase mb-2"><span className="text-emerald-500 flex items-center gap-1"><Globe size={12}/> {order.courier_name}</span></div>
-                                  {order.tracking_url && (
-                                    <a href={order.tracking_url.startsWith('http') ? order.tracking_url : `https://google.com/search?q=${order.tracking_url}`} target="_blank" rel="noreferrer" className={`text-xs font-mono font-medium flex items-center gap-1.5 p-2 rounded border transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-700 text-blue-400 hover:border-blue-500/50' : 'bg-white border-slate-200 text-blue-600 hover:border-blue-300'}`}>
-                                      <LinkIcon size={12}/> {order.tracking_url}
-                                    </a>
-                                  )}
-                                  <button onClick={() => markExternalDelivered(order.id)} className="w-full mt-3 text-[10px] font-bold uppercase p-2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors">
-                                    Mark Delivered
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {order.status === 'fulfilled' && (
-                            <div className="mb-4 space-y-2">
-                              {order.payment_status && (
-                                <div className={`flex items-center gap-2 text-[10px] font-bold uppercase px-2 py-1 rounded border ${order.payment_status === 'Pending' ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'}`}>
-                                  <Receipt size={12} /> Payment: {order.payment_status}
-                                </div>
-                              )}
-                              {order.delivery_evidence_url && (
-                                <button onClick={() => setPreviewPhotoUrl(order.delivery_evidence_url!)} className="w-full flex items-center justify-center gap-2 text-[10px] font-bold uppercase px-2 py-2 rounded border bg-blue-500/10 text-blue-500 border-blue-500/20 hover:bg-blue-500/20 transition-colors">
-                                  <ImageIcon size={12} /> View Delivery Photo
-                                </button>
-                              )}
-                            </div>
-                          )}
-
-                          <div className={`pt-3 flex items-center justify-between border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
-                            <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${isDarkMode ? `bg-slate-900 ${column.border} text-slate-300` : `bg-slate-50 ${column.border} text-slate-600`}`}>{column.title}</span>
-                            <span className={`text-[9px] font-mono ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{new Date(order.created_at).toLocaleDateString()}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <button onClick={() => supabase.auth.signOut().then(() => router.push('/login'))} className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md">
+            <LogOut size={18} />
+          </button>
         </div>
 
-        {/* MODAL: MANAGE & EDIT ORDER */}
-        {manageModalOpen && editingOrder && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setManageModalOpen(false)}>
-            <div className={`w-full max-w-lg p-6 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
-              
-              <div className="flex justify-between items-start mb-6">
-                <div>
-                  <h3 className="text-xl font-bold flex items-center gap-2"><Edit size={20} className="text-indigo-500"/> Manage Order</h3>
-                  <p className="text-sm font-mono mt-1 opacity-60">{editingOrder.order_id_string} • {editingOrder.customers?.name}</p>
-                </div>
-                <button onClick={() => setManageModalOpen(false)} className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}><X size={20} /></button>
-              </div>
+        {/* SELF-SERVICE LIVE PHONE CONFIG PANEL */}
+        <div className="mb-4 py-2.5 px-4 rounded-xl bg-white/10 text-white flex items-center justify-between text-xs font-semibold backdrop-blur-sm">
+          <div className="flex items-center gap-2 flex-1 mr-4">
+            <Phone size={14} className="opacity-70" />
+            {isEditingPhone ? (
+              <input 
+                type="tel" 
+                value={phoneInputValue} 
+                onChange={(e) => setPhoneInputValue(e.target.value)} 
+                className="bg-black/20 text-white px-2 py-1 rounded font-mono border border-white/20 focus:outline-none w-full max-w-[150px]"
+                placeholder="Enter phone"
+              />
+            ) : (
+              <span>Active Phone: <span className="font-mono font-bold">{userPhone || 'Not Set'}</span></span>
+            )}
+          </div>
+          <button 
+            onClick={() => isEditingPhone ? handleUpdatePhone() : setIsEditingPhone(true)} 
+            disabled={isSavingPhone}
+            className="p-1.5 rounded bg-white/10 hover:bg-white/20 active:scale-95 transition-all flex-shrink-0"
+          >
+            {isEditingPhone ? <Save size={14} /> : <Edit2 size={14} />}
+          </button>
+        </div>
 
-              <div className="flex-1 overflow-y-auto space-y-5 pr-2 custom-scrollbar">
-                <div className={`p-4 rounded-xl border flex items-center justify-between ${isDarkMode ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-indigo-50 border-indigo-100'}`}>
+        <div className="flex gap-4 border-b border-white/20">
+          <button onClick={() => setActiveTab('my_route')} className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeTab === 'my_route' ? 'border-white opacity-100' : 'border-transparent opacity-50'}`}>
+            My Route ({myRouteOrders.length})
+          </button>
+          <button onClick={() => setActiveTab('pool')} className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeTab === 'pool' ? 'border-white opacity-100' : 'border-transparent opacity-50'}`}>
+            Available Pool ({poolOrders.length})
+          </button>
+        </div>
+      </header>
+
+      <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        {loading ? (
+          <div className="text-center text-sm font-bold opacity-50 py-10 animate-pulse">SYNCING DISPATCH...</div>
+        ) : displayOrders.length === 0 ? (
+          <div className="text-center py-20">
+            <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4 ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-indigo-100 text-indigo-400'}`}>
+              {activeTab === 'pool' ? <Package size={32} /> : <CheckCircle2 size={32} />}
+            </div>
+            <h3 className="text-lg font-bold">{activeTab === 'pool' ? 'No unassigned orders.' : 'Route cleared!'}</h3>
+          </div>
+        ) : (
+          displayOrders.map(order => {
+            const displayAddress = order.delivery_address || order.address || order.customers?.address || 'No address details provided.';
+            const displayPhone = order.contact_phone || order.phone || order.customers?.phone || null;
+
+            return (
+              <div key={order.id} className={`p-5 rounded-2xl shadow-sm border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h4 className={`text-sm font-bold ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>Print Waybill</h4>
-                    <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-indigo-300/70' : 'text-indigo-600/70'}`}>Generate a printable packing slip for the warehouse.</p>
+                    <h3 className="text-sm font-bold font-mono">{order.order_id_string}</h3>
+                    <p className={`text-lg font-black mt-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatCurrency(order.total_amount, 'USD')}</p>
                   </div>
-                  <button onClick={() => handlePrintSlip(editingOrder)} className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
-                    <Printer size={14} /> Print Slip
-                  </button>
+                  <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${!order.assigned_driver_id ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/20 text-blue-500'}`}>
+                    {!order.assigned_driver_id ? 'Needs Driver' : (order.delivery_state || 'assigned').replace('_', ' ')}
+                  </div>
                 </div>
-
-                <form id="editOrderForm" onSubmit={handleSaveOrderDetails} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                <div className="space-y-3 mb-6 border-t border-b py-4 my-4 dark:border-slate-800 border-slate-100">
+                  <div className="flex items-start gap-3 text-sm font-medium">
+                    <div className={`p-2 rounded-lg mt-0.5 flex-shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><MapPin size={16} /></div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase mb-1 opacity-60">Customer Phone</label>
-                      <div className="relative">
-                        <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-40" />
-                        <input type="text" value={editPhone} onChange={e => setEditPhone(e.target.value)} className={`w-full pl-9 pr-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 border ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="09..." />
-                      </div>
+                      <span className="font-black block text-base">{order.customers?.name || 'Unknown Recipient'}</span>
+                      <span className="text-xs mt-1 block opacity-70 leading-relaxed">{displayAddress}</span>
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase mb-1 opacity-60">Delivery Address</label>
-                    <div className="relative">
-                      <MapPin size={14} className="absolute left-3 top-3 opacity-40" />
-                      <textarea rows={2} value={editAddress} onChange={e => setEditAddress(e.target.value)} className={`w-full pl-9 pr-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 border resize-none ${isDarkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`} placeholder="Full street address..." />
+                  {displayPhone && (
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <div className={`p-2 rounded-lg flex-shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><Phone size={16} /></div>
+                      <a href={`tel:${displayPhone}`} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline text-sm tracking-wide">
+                        {displayPhone}
+                      </a>
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase mb-1 opacity-60 text-amber-500">Internal Remarks / Notes</label>
-                    <textarea rows={3} value={editNotes} onChange={e => setEditNotes(e.target.value)} className={`w-full p-3 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/50 border resize-none ${isDarkMode ? 'bg-amber-950/10 border-amber-900/50 text-white' : 'bg-amber-50/50 border-amber-200 text-slate-900'}`} placeholder="e.g. Fragile, deliver after 5pm, missing payment..." />
-                  </div>
-                </form>
-              </div>
-
-              <div className="pt-6 mt-2 border-t flex justify-between items-center border-slate-200 dark:border-slate-800">
-                <button onClick={() => handleDeleteOrder(editingOrder.id)} className="text-xs font-bold flex items-center gap-1.5 px-3 py-2 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
-                  <Trash2 size={14} /> Cancel & Delete Order
-                </button>
-                <div className="flex gap-2">
-                  <button onClick={() => setManageModalOpen(false)} className={`px-4 py-2.5 rounded-lg text-sm font-bold border transition ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'}`}>Close</button>
-                  <button type="submit" form="editOrderForm" disabled={editSaving} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg transition-all shadow-md disabled:opacity-50">
-                    {editSaving ? 'Saving...' : 'Save Updates'}
-                  </button>
+                  )}
                 </div>
+
+                {!order.assigned_driver_id ? (
+                  <button onClick={() => claimOrder(order.id)} className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform text-sm">
+                    <HandGrab size={16} /> Claim Route
+                  </button>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="relative w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                      <div className={`absolute top-0 left-0 h-full bg-indigo-500 transition-all duration-500 ${order.delivery_state === 'assigned' || !order.delivery_state ? 'w-1/3' : order.delivery_state === 'picked_up' ? 'w-2/3' : 'w-full'}`}></div>
+                    </div>
+
+                    {(order.delivery_state === 'assigned' || !order.delivery_state) && (
+                      <button onClick={() => advanceProgress(order.id, 'picked_up')} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl flex justify-center items-center gap-2 text-sm border dark:border-slate-700">
+                        <Package size={16} /> Mark as Picked Up
+                      </button>
+                    )}
+                    {order.delivery_state === 'picked_up' && (
+                      <button onClick={() => advanceProgress(order.id, 'arrived')} className="w-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 font-bold py-3 rounded-xl flex justify-center items-center gap-2 text-sm">
+                        <Navigation size={16} /> Mark as Arrived
+                      </button>
+                    )}
+                    {order.delivery_state === 'arrived' && (
+                      <button onClick={() => setActiveDelivery(order)} className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 text-sm shadow-lg shadow-indigo-500/30">
+                        <CheckCircle2 size={16} /> Complete Delivery
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </main>
+
+      {/* CONFIRMATION WIDGET */}
+      {activeDelivery && (
+        <div className={`fixed inset-0 z-50 flex flex-col ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
+          <div className={`pt-12 pb-4 px-6 flex justify-between items-center border-b ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+            <h2 className="text-lg font-bold flex items-center gap-2"><Truck className="text-indigo-500" /> Complete Order</h2>
+            <button onClick={() => setActiveDelivery(null)} className={`p-2 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}><X size={20} /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="text-center mb-6">
+              <h3 className="text-2xl font-black font-mono">{activeDelivery.order_id_string}</h3>
+              <p className="text-base font-bold mt-1">{activeDelivery.customers?.name}</p>
+              <div className={`inline-block mt-4 px-6 py-2 rounded-xl text-xl font-black ${isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>
+                Collect: {formatCurrency(activeDelivery.total_amount, 'USD')}
               </div>
             </div>
+            <form onSubmit={submitDelivery} className="space-y-6">
+              <div className="p-5 rounded-2xl border dark:bg-slate-900 dark:border-slate-800 bg-white border-slate-200">
+                <label className="flex items-center gap-2 text-sm font-bold mb-3 text-slate-500"><Receipt size={16} /> Payment Status</label>
+                <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)} className="w-full px-4 py-4 rounded-xl text-base font-semibold border dark:bg-slate-950 dark:border-slate-700 bg-slate-50 border-slate-200">
+                  <option value="Cash Received">Cash Received (COD)</option>
+                  <option value="Already Paid (Online)">Already Paid Online</option>
+                  <option value="Transferred on Delivery">Bank Transfer</option>
+                  <option value="Pending">Payment Failed</option>
+                </select>
+              </div>
+              <div className="p-5 rounded-2xl border dark:bg-slate-900 dark:border-slate-800 bg-white border-slate-200">
+                <label className="flex items-center gap-2 text-sm font-bold mb-3 text-slate-500"><Camera size={16} /> Photo Evidence</label>
+                <label className={`w-full flex flex-col items-center justify-center py-10 border-2 border-dashed rounded-xl cursor-pointer ${evidenceFile ? 'border-emerald-500 bg-emerald-500/10 text-emerald-500' : 'dark:border-slate-700 dark:bg-slate-950 text-slate-400 border-slate-300 bg-slate-50'}`}>
+                  <Camera size={36} className="mb-3" />
+                  <span className="text-base font-bold">{evidenceFile ? 'Photo Captured!' : 'Tap to Open Camera'}</span>
+                  <input type="file" accept="image/*" capture="environment" onChange={(e) => e.target.files && setEvidenceFile(e.target.files[0])} className="hidden" />
+                </label>
+              </div>
+              <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 text-white font-black text-lg py-5 rounded-2xl disabled:opacity-50">
+                {isSubmitting ? 'Uploading Data...' : 'Confirm Delivery'}
+              </button>
+            </form>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* PHOTO VIEWER OVERLAY MODAL */}
-        {previewPhotoUrl && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={() => setPreviewPhotoUrl(null)}>
-            <div className="relative max-w-3xl w-full flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-              <button onClick={() => setPreviewPhotoUrl(null)} className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 transition-colors"><X size={28} /></button>
-              <img src={previewPhotoUrl} alt="Proof of Delivery" className="w-full h-auto max-h-[85vh] object-contain rounded-xl shadow-2xl" />
-            </div>
-          </div>
-        )}
-
-      </main>
     </div>
   );
 }
