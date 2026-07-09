@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { 
-  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone
+  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone, Edit2, Save
 } from 'lucide-react';
 
 interface Order {
@@ -36,11 +36,16 @@ export default function DriverApp() {
   
   // App States
   const [userId, setUserId] = useState<string | null>(null);
-  const [userPhone, setUserPhone] = useState<string>('N/A');
+  const [userPhone, setUserPhone] = useState<string>('');
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'pool' | 'my_route'>('my_route');
+
+  // Phone Editing States
+  const [isEditingPhone, setIsEditingPhone] = useState(false);
+  const [phoneInputValue, setPhoneInputValue] = useState('');
+  const [isSavingPhone, setIsSavingPhone] = useState(false);
 
   // Delivery Modal States
   const [activeDelivery, setActiveDelivery] = useState<Order | null>(null);
@@ -50,25 +55,17 @@ export default function DriverApp() {
 
   const fetchDeliveries = async (targetWorkspaceId: string) => {
     if (!targetWorkspaceId) return;
-    
     try {
       const { data, error } = await supabase
         .from('orders')
         .select('*, customers(name)')
-        .eq('user_id', targetWorkspaceId) // 🔒 SECURED: Restored multi-tenant isolation gate
+        .eq('user_id', targetWorkspaceId)
         .eq('status', 'in_transit')
         .order('created_at', { ascending: true });
 
-      if (error) {
-        console.error("Database query failed:", error.message);
-        return;
-      }
-
-      if (data) {
-        setDeliveries(data as unknown as Order[]);
-      }
+      if (!error && data) setDeliveries(data as unknown as Order[]);
     } catch (err: any) {
-      console.error("Crash during network call:", err.message);
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -93,11 +90,13 @@ export default function DriverApp() {
         
         const activeWorkspaceId = profile?.workspace_id || session.user.id;
         setWorkspaceId(activeWorkspaceId);
-        if (profile?.phone) setUserPhone(profile.phone);
+        if (profile?.phone) {
+          setUserPhone(profile.phone);
+          setPhoneInputValue(profile.phone);
+        }
 
         await fetchDeliveries(activeWorkspaceId);
       } catch (err: any) {
-        console.error("Initialization failed:", err.message);
         setLoading(false);
       }
     };
@@ -105,34 +104,41 @@ export default function DriverApp() {
     initializeApp();
   }, [router]);
 
-  // Real-time updates subscription mapped to specific workspace context
   useEffect(() => {
     if (!workspaceId) return;
-
     const channel = supabase.channel('live-driver-orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         if (workspaceId) fetchDeliveries(workspaceId);
       })
       .subscribe();
-      
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId]);
 
+  // 🚀 DRIVER UPDATE SELF-PHONE HANDLER
+  const handleUpdatePhone = async () => {
+    if (!userId) return;
+    setIsSavingPhone(true);
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ phone: phoneInputValue })
+      .eq('id', userId);
+
+    setIsSavingPhone(false);
+    if (!error) {
+      setUserPhone(phoneInputValue);
+      setIsEditingPhone(false);
+    } else {
+      alert("Failed to save telephone settings. Check connectivity.");
+    }
+  };
+
   const claimOrder = async (orderId: string) => {
     if (!userId) return;
-    
     setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
     setActiveTab('my_route');
 
-    const { error } = await supabase.from('orders').update({ 
-      assigned_driver_id: userId, 
-      delivery_state: 'assigned' 
-    }).eq('id', orderId);
-
-    if (error) {
-      alert("Failed to claim order.");
-      if (workspaceId) fetchDeliveries(workspaceId);
-    }
+    await supabase.from('orders').update({ assigned_driver_id: userId, delivery_state: 'assigned' }).eq('id', orderId);
   };
 
   const advanceProgress = async (orderId: string, newState: string) => {
@@ -167,7 +173,7 @@ export default function DriverApp() {
       setActiveDelivery(null);
       setEvidenceFile(null);
     } catch (error: any) {
-      alert(`Delivery failed: ${error.message}`);
+      alert(`Fulfillment Error: ${error.message}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -175,7 +181,6 @@ export default function DriverApp() {
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
-  // Roster filters
   const poolOrders = deliveries.filter(o => !o.assigned_driver_id || o.delivery_state === 'unassigned');
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
@@ -184,13 +189,38 @@ export default function DriverApp() {
     <div className={`min-h-screen font-sans flex flex-col pb-12 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
       
       <header className={`pt-12 pb-0 px-6 shadow-sm z-10 ${isDarkMode ? 'bg-slate-900' : 'bg-indigo-600 text-white'}`}>
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-4">
           <div>
             <h1 className="text-xl font-black tracking-tight">Driver Portal</h1>
             <p className="text-xs opacity-80 mt-0.5">{myRouteOrders.length} active stops on your route</p>
           </div>
           <button onClick={() => supabase.auth.signOut().then(() => router.push('/login'))} className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md">
             <LogOut size={18} />
+          </button>
+        </div>
+
+        {/* 🚀 SELF-SERVICE LIVE PHONE CONFIG PANEL */}
+        <div className="mb-4 py-2.5 px-4 rounded-xl bg-white/10 text-white flex items-center justify-between text-xs font-semibold backdrop-blur-sm">
+          <div className="flex items-center gap-2 flex-1 mr-4">
+            <Phone size={14} className="opacity-70" />
+            {isEditingPhone ? (
+              <input 
+                type="tel" 
+                value={phoneInputValue} 
+                onChange={(e) => setPhoneInputValue(e.target.value)} 
+                className="bg-black/20 text-white px-2 py-1 rounded font-mono border border-white/20 focus:outline-none w-full max-w-[150px]"
+                placeholder="Enter phone"
+              />
+            ) : (
+              <span>Active Phone: <span className="font-mono font-bold">{userPhone || 'Not Set'}</span></span>
+            )}
+          </div>
+          <button 
+            onClick={() => isEditingPhone ? handleUpdatePhone() : setIsEditingPhone(true)} 
+            disabled={isSavingPhone}
+            className="p-1.5 rounded bg-white/10 hover:bg-white/20 active:scale-95 transition-all flex-shrink-0"
+          >
+            {isEditingPhone ? <Save size={14} /> : <Edit2 size={14} />}
           </button>
         </div>
 
@@ -231,7 +261,6 @@ export default function DriverApp() {
                   </div>
                 </div>
                 
-                {/* CONTACT DETAILS AREA */}
                 <div className="space-y-3 mb-6 border-t border-b py-4 my-4 dark:border-slate-800 border-slate-100">
                   <div className="flex items-start gap-3 text-sm font-medium">
                     <div className={`p-2 rounded-lg mt-0.5 flex-shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><MapPin size={16} /></div>
@@ -251,7 +280,6 @@ export default function DriverApp() {
                   )}
                 </div>
 
-                {/* INTERACTION MATRIX */}
                 {!order.assigned_driver_id ? (
                   <button onClick={() => claimOrder(order.id)} className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform text-sm">
                     <HandGrab size={16} /> Claim Route

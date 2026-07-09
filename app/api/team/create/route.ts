@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: Request) {
   try {
-    const { email, password, fullName, role, workspaceId } = await req.json();
+    const { email, password, fullName, role, workspaceId, phone } = await req.json();
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseAdminKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -18,19 +18,19 @@ export async function POST(req: Request) {
 
     if (authError) throw authError;
 
-    // 2. FORCE INSERT/UPDATE: Guarantee the profile row is created with all data
+    // 2. FORCE INSERT/UPDATE: Include the optional phone parameter here
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
       .upsert({
         id: authData.user.id,
         full_name: fullName,
-        email: email, // Explicitly save the email
+        email: email, 
         role: role,
-        workspace_id: workspaceId
+        workspace_id: workspaceId,
+        phone: phone || null // Fallback to null if left blank
       });
 
     if (profileError) {
-      // If profile fails, rollback and delete the auth user so we don't get phantom accounts!
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
       throw profileError;
     }
