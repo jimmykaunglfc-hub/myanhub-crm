@@ -27,7 +27,7 @@ export default function DriverApp() {
   const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
-  const [userPhone, setUserPhone] = useState<string>('N/A'); // 🚀 NEW: Driver's Phone
+  const [userPhone, setUserPhone] = useState<string>('N/A'); 
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +48,6 @@ export default function DriverApp() {
       }
       setUserId(session.user.id);
       
-      // 🚀 NEW: Fetch the driver's phone number from their profile
       const { data: profile } = await supabase
         .from('profiles')
         .select('workspace_id, phone')
@@ -65,15 +64,21 @@ export default function DriverApp() {
 
   const fetchDeliveries = async () => {
     if (!workspaceId) return;
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*, customers(name)')
-      .eq('user_id', workspaceId)
-      .eq('status', 'in_transit')
-      .order('created_at', { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, customers(name)')
+        .eq('user_id', workspaceId)
+        .eq('status', 'in_transit')
+        .order('created_at', { ascending: true });
 
-    if (!error && data) setDeliveries(data as Order[]);
-    setLoading(false);
+      if (!error && data) setDeliveries(data as Order[]);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      // 🚀 THE FIX: Force loading state to turn off once the network request completes
+      setLoading(false);
+    }
   };
 
   useEffect(() => { if (workspaceId) fetchDeliveries(); }, [workspaceId]);
@@ -96,7 +101,6 @@ export default function DriverApp() {
 
     let notificationText = '';
     
-    // 🚀 NEW: Includes the Driver's Phone Number when claimed
     if (newStatus === 'assigned') {
       notificationText = `🚚 Great news! Your order ${order.order_id_string} has been picked up by our driver. You can contact them at: ${userPhone}`;
     } else if (newStatus === 'picked_up') {
@@ -128,11 +132,9 @@ export default function DriverApp() {
   const claimOrder = async (order: Order) => {
     if (!userId) return;
     
-    // Optimistic UI
     setDeliveries(prev => prev.map(o => o.id === order.id ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
     setActiveTab('my_route');
 
-    // Background Sync
     const { error } = await supabase.from('orders').update({ 
       assigned_driver_id: userId, 
       delivery_state: 'assigned' 
@@ -142,7 +144,7 @@ export default function DriverApp() {
       alert("Failed to claim order. Check connection.");
       fetchDeliveries(); 
     } else {
-      sendOrderNotification(order, 'assigned'); // 🚀 NEW: Trigger assignment notification
+      sendOrderNotification(order, 'assigned'); 
     }
   };
 
@@ -208,7 +210,6 @@ export default function DriverApp() {
   return (
     <div className={`min-h-screen font-sans flex flex-col ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
       
-      {/* 🚀 UPGRADED: Professional Header */}
       <header className={`pt-12 pb-0 px-6 shadow-sm z-10 ${isDarkMode ? 'bg-slate-900' : 'bg-indigo-600 text-white'}`}>
         <div className="flex justify-between items-center mb-6">
           <div>
