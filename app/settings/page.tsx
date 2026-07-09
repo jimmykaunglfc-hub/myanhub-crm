@@ -50,13 +50,16 @@ export default function EnhancedSettings() {
   const [newPassword, setNewPassword] = useState('');
   const [profileStatus, setProfileStatus] = useState('');
 
-  // 1. Fetch Session, Profile & Integrations
+  // 1. 🚀 FIXED: Accelerated Local Token Caching Matrix (RLS Safe Initialization)
   useEffect(() => {
     setDomainUrl(window.location.host);
 
     const initializeSettings = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
+      // Switched from live server verification getUser() to instant cached getSession()
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        const user = session.user;
         setUserEmail(user.email || '');
         setUserId(user.id);
         
@@ -71,7 +74,10 @@ export default function EnhancedSettings() {
         }
 
         if (profile) {
-          if (profile.currency_code) setCurrencyCode(profile.currency_code);
+          // 🚀 FIXED: Added string sanitization to protect against column space-padding or case variations
+          if (profile.currency_code) {
+            setCurrencyCode(profile.currency_code.trim().toUpperCase());
+          }
           if (profile.ai_auto_respond !== undefined) setAiEnabled(profile.ai_auto_respond);
           if (profile.business_name) setBusinessName(profile.business_name);
           if (profile.phone) setPhoneNumber(profile.phone);
@@ -104,13 +110,11 @@ export default function EnhancedSettings() {
     }
   };
 
-  // 🚀 FIXED: RLS-Immune Currency Mutation Engine
   const handleCurrencyChange = async (newCurrency: string) => {
-    const previousCurrency = currencyCode; // Cache the current state for safe rollback execution
+    const previousCurrency = currencyCode; 
     setCurrencyCode(newCurrency);
     setIsSavingCurrency(true);
     
-    // Removed trailing .select() to decouple write confirmation from read authorization filters
     const { error } = await supabase
       .from('profiles')
       .update({ currency_code: newCurrency })
@@ -118,7 +122,7 @@ export default function EnhancedSettings() {
     
     if (error) {
       alert(`DATABASE ERROR: ${error.message}\n\nPlease check your database permissions.`);
-      setCurrencyCode(previousCurrency); // Roll back cleanly to original value instead of forcing USD
+      setCurrencyCode(previousCurrency); 
     }
     
     setTimeout(() => setIsSavingCurrency(false), 800); 
@@ -226,7 +230,7 @@ export default function EnhancedSettings() {
   const activeIntegration = activeChannel ? integrations.find(i => i.channel === activeChannel) : null;
 
   return (
-    <div className={`flex font-sans min-h-screen transition-colors duration-200 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
+    <div className={`flex font-sans min-h-screen transition-colors duration-200 ${isDarkMode ? 'bg-slate-955 bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
       <Sidebar />
       <main className="flex-1 md:ml-64 flex flex-col relative">
         <Header />
@@ -250,7 +254,7 @@ export default function EnhancedSettings() {
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Box 1: Env Mode */}
-              <div className={`p-5 rounded-xl flex flex-col justify-between transition-colors border ${isDarkMode ? 'bg-slate-955/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
+              <div className={`p-5 rounded-xl flex flex-col justify-between transition-colors border ${isDarkMode ? 'bg-slate-900 bg-slate-950/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
                 <div>
                   <span className="block text-sm font-bold mb-1">Operation Mode</span>
                   <span className={`text-xs leading-relaxed block mb-4 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Toggle Sandbox testing environments or switch to Live production relays.</span>
@@ -262,7 +266,7 @@ export default function EnhancedSettings() {
               </div>
 
               {/* Box 2: Theme */}
-              <div className={`p-5 rounded-xl flex flex-col justify-between transition-colors border ${isDarkMode ? 'bg-slate-955/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
+              <div className={`p-5 rounded-xl flex flex-col justify-between transition-colors border ${isDarkMode ? 'bg-slate-900 bg-slate-950/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
                 <div>
                   <span className="block text-sm font-bold mb-1">Interface Theme</span>
                   <span className={`text-xs leading-relaxed block mb-4 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Flip workspace viewing styles between crisp Light skin or standard Midnight mode.</span>
@@ -274,7 +278,7 @@ export default function EnhancedSettings() {
               </div>
 
               {/* Box 3: Currency */}
-              <div className={`p-5 rounded-xl flex flex-col justify-between transition-colors border ${isDarkMode ? 'bg-slate-955/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
+              <div className={`p-5 rounded-xl flex flex-col justify-between transition-colors border ${isDarkMode ? 'bg-slate-900 bg-slate-950/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
                 <div className="flex justify-between items-start mb-3">
                   <div>
                     <span className="block text-sm font-bold mb-1">Base Currency</span>
@@ -349,7 +353,7 @@ export default function EnhancedSettings() {
                   <button
                     key={plat.id}
                     onClick={() => { setActiveChannel(plat.id as ChannelType); setChannelStatus(''); setIsEditing(false); setCredentialKey(''); }}
-                    className={`relative p-5 rounded-xl border flex flex-col items-center justify-center gap-3 transition-all duration-200 overflow-hidden ${activeChannel === plat.id ? 'border-indigo-500 bg-indigo-500/10 shadow-inner ring-2 ring-indigo-500/20' : isDarkMode ? 'border-slate-800 hover:border-slate-600 bg-slate-950/40' : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'}`}
+                    className={`relative p-5 rounded-xl border flex flex-col items-center justify-center gap-3 transition-all duration-200 overflow-hidden ${activeChannel === plat.id ? 'border-indigo-500 bg-indigo-500/10 shadow-inner ring-2 ring-indigo-500/20' : isDarkMode ? 'border-slate-800 hover:border-slate-600 bg-slate-955 bg-slate-950/40' : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'}`}
                   >
                     {isConnected && (
                       <div className="absolute top-2.5 right-2.5 flex items-center justify-center">
@@ -365,7 +369,7 @@ export default function EnhancedSettings() {
 
             {/* CONNECTION MANAGER VIEW */}
             {activeChannel && (
-              <div className={`mt-6 p-6 border rounded-xl animate-fade-in transition-colors ${isDarkMode ? 'bg-slate-955/80 border-indigo-500/30' : 'bg-indigo-50/50 border-indigo-100'}`}>
+              <div className={`mt-6 p-6 border rounded-xl animate-fade-in transition-colors ${isDarkMode ? 'bg-slate-900 bg-slate-955/80 border-indigo-500/30' : 'bg-indigo-50/50 border-indigo-100'}`}>
                 
                 {/* ALREADY CONNECTED STATE */}
                 {activeIntegration && !isEditing ? (
@@ -460,7 +464,7 @@ export default function EnhancedSettings() {
 
                 {/* STATUS MESSAGES */}
                 {channelStatus && (
-                  <div className={`mt-5 text-sm font-bold p-4 rounded-xl border flex items-center gap-3 animate-fade-in ${channelStatus.includes('Error') ? (isDarkMode ? 'bg-rose-955/40 text-rose-400 border-rose-900' : 'bg-rose-50 text-rose-700 border-rose-200') : (isDarkMode ? 'bg-emerald-955/40 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200')}`}>
+                  <div className={`mt-5 text-sm font-bold p-4 rounded-xl border flex items-center gap-3 animate-fade-in ${channelStatus.includes('Error') ? (isDarkMode ? 'bg-slate-900 bg-rose-950/40 text-rose-400 border-rose-900' : 'bg-rose-50 text-rose-700 border-rose-200') : (isDarkMode ? 'bg-slate-900 bg-emerald-955/40 bg-emerald-900 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200')}`}>
                     {channelStatus.includes('Error') ? <AlertCircle size={18} className="flex-shrink-0" /> : <CheckCircle2 size={18} className="flex-shrink-0" />}
                     {channelStatus}
                   </div>
@@ -481,7 +485,7 @@ export default function EnhancedSettings() {
                   <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Business / Shop Name</label>
                   <div className="relative">
                     <Building size={16} className={`absolute left-4 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                    <input type="text" value={businessName} onChange={e => setBusinessName(e.target.value)} placeholder="e.g. MyanHub Official Store" className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-955 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
+                    <input type="text" value={businessName} onChange={e => setBusinessName(e.target.value)} placeholder="e.g. MyanHub Official Store" className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-900 bg-slate-950 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
                   </div>
                 </div>
 
@@ -490,7 +494,7 @@ export default function EnhancedSettings() {
                   <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Support / Driver Phone</label>
                   <div className="relative">
                     <Phone size={16} className={`absolute left-4 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                    <input type="tel" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} placeholder="e.g. 09-123-456-789" className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-955 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
+                    <input type="tel" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} placeholder="e.g. 09-123-456-789" className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-900 bg-slate-950 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
                   </div>
                 </div>
               </div>
@@ -516,13 +520,13 @@ export default function EnhancedSettings() {
             <form onSubmit={handleUpdatePassword} className="max-w-md space-y-4">
               <div>
                 <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>New Workspace Password</label>
-                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required placeholder="Enter minimum 8 character passkey" className={`w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-955 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
+                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required placeholder="Enter minimum 8 character passkey" className={`w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition border ${isDarkMode ? 'bg-slate-900 bg-slate-950 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'}`} />
               </div>
               <button type="submit" className="w-full sm:w-auto bg-slate-900 dark:bg-indigo-600 hover:bg-slate-800 dark:hover:bg-indigo-500 text-white text-sm font-bold px-8 py-3 rounded-xl transition-all shadow-md active:scale-95">Apply Security Update</button>
             </form>
 
             {profileStatus && (
-              <div className={`mt-5 inline-flex items-center gap-2 text-sm font-bold p-4 rounded-xl border animate-fade-in ${profileStatus.includes('Error') ? (isDarkMode ? 'bg-rose-955/40 text-rose-400 border-rose-900' : 'bg-rose-50 text-rose-700 border-rose-200') : (isDarkMode ? 'bg-indigo-955/40 text-indigo-400 border-indigo-900' : 'bg-indigo-50 text-indigo-700 border-indigo-200')}`}>
+              <div className={`mt-5 inline-flex items-center gap-2 text-sm font-bold p-4 rounded-xl border animate-fade-in ${profileStatus.includes('Error') ? (isDarkMode ? 'bg-slate-900 bg-rose-955/40 bg-rose-50 text-rose-400 border-rose-900' : 'bg-rose-50 text-rose-700 border-rose-200') : (isDarkMode ? 'bg-slate-900 bg-indigo-950/40 text-indigo-400 border-indigo-900' : 'bg-indigo-50 text-indigo-700 border-indigo-200')}`}>
                 {profileStatus.includes('Error') ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
                 {profileStatus}
               </div>
