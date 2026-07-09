@@ -5,7 +5,6 @@ export async function POST(req: Request) {
   try {
     const { email, password, fullName, role, workspaceId } = await req.json();
 
-    // 🚀 CRITICAL: We must use the SERVICE_ROLE_KEY to bypass security and create an Auth user
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseAdminKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const supabaseAdmin = createClient(supabaseUrl, supabaseAdminKey);
@@ -14,22 +13,27 @@ export async function POST(req: Request) {
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: email,
       password: password,
-      email_confirm: true, // Auto-confirm so they can log in immediately
+      email_confirm: true, 
     });
 
     if (authError) throw authError;
 
-    // 2. Update their public profile with their Role, Name, and Workspace ID
+    // 2. FORCE INSERT/UPDATE: Guarantee the profile row is created with all data
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
-      .update({
+      .upsert({
+        id: authData.user.id,
         full_name: fullName,
+        email: email, // Explicitly save the email
         role: role,
         workspace_id: workspaceId
-      })
-      .eq('id', authData.user.id);
+      });
 
-    if (profileError) throw profileError;
+    if (profileError) {
+      // If profile fails, rollback and delete the auth user so we don't get phantom accounts!
+      await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+      throw profileError;
+    }
 
     return NextResponse.json({ success: true, userId: authData.user.id });
     

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { 
-  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab
+  Truck, MapPin, Camera, CheckCircle2, X, Receipt, LogOut, Package, Navigation, HandGrab, Phone
 } from 'lucide-react';
 
 interface Order {
@@ -15,10 +15,12 @@ interface Order {
   total_amount: number;
   status: string;
   payment_status: string;
-  delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
+  delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered' | null;
   assigned_driver_id: string | null;
   created_at: string;
   customer_id: string; 
+  delivery_address: string | null;
+  contact_phone: string | null;
   customers: { name: string } | null;
 }
 
@@ -39,7 +41,7 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 🚀 THE FIX: Single, guaranteed initialization flow
+  // Single, guaranteed initialization flow
   useEffect(() => {
     const initializeApp = async () => {
       try {
@@ -58,8 +60,6 @@ export default function DriverApp() {
           .eq('id', session.user.id)
           .single();
         
-        // If the user has a workspace_id (Driver), use it. 
-        // If they don't (CRM Owner), fallback to their own session ID.
         const activeWorkspaceId = profile?.workspace_id || session.user.id;
         
         setWorkspaceId(activeWorkspaceId);
@@ -70,7 +70,7 @@ export default function DriverApp() {
           .from('orders')
           .select('*, customers(name)')
           .eq('user_id', activeWorkspaceId)
-          .eq('status', 'in_transit') // Restored exactly to your original logic
+          .eq('status', 'in_transit') 
           .order('created_at', { ascending: true });
 
         if (!ordersError && ordersData) {
@@ -79,7 +79,6 @@ export default function DriverApp() {
       } catch (err) {
         console.error("Initialization error:", err);
       } finally {
-        // Guaranteed to turn off the infinite spinner
         setLoading(false);
       }
     };
@@ -157,7 +156,6 @@ export default function DriverApp() {
 
     if (error) {
       alert("Failed to claim order. Check connection.");
-      // Soft refresh on failure
       const { data } = await supabase.from('orders').select('*, customers(name)').eq('user_id', workspaceId!).eq('status', 'in_transit').order('created_at', { ascending: true });
       if (data) setDeliveries(data as Order[]);
     } else {
@@ -219,8 +217,8 @@ export default function DriverApp() {
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
-  // Restored exactly to your original logic
-  const poolOrders = deliveries.filter(o => o.delivery_state === 'unassigned');
+  // Roster logic: If unassigned, it is available to the pool. If assigned to me, it's on my route.
+  const poolOrders = deliveries.filter(o => !o.assigned_driver_id);
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
 
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
@@ -269,40 +267,55 @@ export default function DriverApp() {
                   <p className={`text-lg font-black mt-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatCurrency(order.total_amount, 'USD')}</p>
                 </div>
                 <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${activeTab === 'pool' ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/20 text-blue-500'}`}>
-                  {activeTab === 'pool' ? 'Needs Driver' : order.delivery_state.replace('_', ' ')}
+                  {activeTab === 'pool' ? 'Needs Driver' : (order.delivery_state || 'assigned').replace('_', ' ')}
                 </div>
               </div>
               
-              <div className="flex items-center gap-3 text-sm font-medium mb-6">
-                <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><MapPin size={16} /></div>
-                {order.customers?.name || 'Unknown Customer'}
+              {/* CUSTOMER CONTACT & ROUTING INFORMATION MODULE */}
+              <div className="space-y-3 mb-6">
+                <div className="flex items-start gap-3 text-sm font-medium">
+                  <div className={`p-2 rounded-lg mt-0.5 flex-shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><MapPin size={16} /></div>
+                  <div>
+                    <span className="font-bold block text-base">{order.customers?.name || 'Unknown Customer'}</span>
+                    <span className={`text-xs mt-1 block opacity-70 leading-relaxed`}>{order.delivery_address || 'No Address Logged'}</span>
+                  </div>
+                </div>
+
+                {order.contact_phone && (
+                  <div className="flex items-center gap-3 text-sm font-medium">
+                    <div className={`p-2 rounded-lg flex-shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><Phone size={16} /></div>
+                    <a href={`tel:${order.contact_phone}`} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline tracking-wide text-sm">
+                      {order.contact_phone}
+                    </a>
+                  </div>
+                )}
               </div>
 
               {/* ACTION AREA */}
               {activeTab === 'pool' ? (
-                <button onClick={() => claimOrder(order.id)} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform">
+                <button onClick={() => claimOrder(order.id)} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform text-sm shadow-md">
                   <HandGrab size={16} /> Claim Route
                 </button>
               ) : (
                 <div className="space-y-4">
                   {/* PROGRESS BAR */}
                   <div className="relative w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                    <div className={`absolute top-0 left-0 h-full bg-indigo-500 transition-all duration-500 ${order.delivery_state === 'assigned' ? 'w-1/3' : order.delivery_state === 'picked_up' ? 'w-2/3' : 'w-full'}`}></div>
+                    <div className={`absolute top-0 left-0 h-full bg-indigo-500 transition-all duration-500 ${order.delivery_state === 'assigned' || !order.delivery_state ? 'w-1/3' : order.delivery_state === 'picked_up' ? 'w-2/3' : 'w-full'}`}></div>
                   </div>
 
                   {/* DYNAMIC PROGRESS BUTTONS */}
-                  {order.delivery_state === 'assigned' && (
-                    <button onClick={() => advanceProgress(order.id, 'picked_up')} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform border dark:border-slate-700">
+                  {(order.delivery_state === 'assigned' || !order.delivery_state) && (
+                    <button onClick={() => advanceProgress(order.id, 'picked_up')} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform border dark:border-slate-700 text-sm">
                       <Package size={16} /> Mark as Picked Up
                     </button>
                   )}
                   {order.delivery_state === 'picked_up' && (
-                    <button onClick={() => advanceProgress(order.id, 'arrived')} className="w-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform">
+                    <button onClick={() => advanceProgress(order.id, 'arrived')} className="w-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform text-sm">
                       <Navigation size={16} /> Mark as Arrived
                     </button>
                   )}
                   {order.delivery_state === 'arrived' && (
-                    <button onClick={() => setActiveDelivery(order)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform shadow-lg shadow-indigo-500/30">
+                    <button onClick={() => setActiveDelivery(order)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform shadow-lg shadow-indigo-500/30 text-sm">
                       <CheckCircle2 size={16} /> Complete Delivery
                     </button>
                   )}
@@ -321,13 +334,16 @@ export default function DriverApp() {
             <button onClick={() => setActiveDelivery(null)} className={`p-2 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-200'}`}><X size={20} /></button>
           </div>
           <div className="flex-1 overflow-y-auto p-6">
-            <div className="text-center mb-8">
+            <div className="text-center mb-6 border-b pb-6 border-slate-200 dark:border-slate-800">
               <h3 className="text-2xl font-black font-mono">{activeDelivery.order_id_string}</h3>
-              <p className="text-sm font-medium opacity-60 mt-1">{activeDelivery.customers?.name}</p>
+              <p className="text-base font-bold opacity-90 mt-1">{activeDelivery.customers?.name}</p>
+              <p className="text-xs opacity-60 max-w-sm mx-auto mt-2 leading-relaxed">{activeDelivery.delivery_address}</p>
+              
               <div className={`inline-block mt-4 px-6 py-2 rounded-xl text-xl font-black ${isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>
                 Collect: {formatCurrency(activeDelivery.total_amount, 'USD')}
               </div>
             </div>
+            
             <form onSubmit={submitDelivery} className="space-y-6">
               <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                 <label className="flex items-center gap-2 text-sm font-bold mb-3 uppercase tracking-wider text-slate-500"><Receipt size={16} /> Payment Status</label>
