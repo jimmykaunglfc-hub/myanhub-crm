@@ -15,7 +15,7 @@ interface Order {
   total_amount: number;
   status: string;
   payment_status: string;
-  delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered';
+  delivery_state: 'unassigned' | 'assigned' | 'picked_up' | 'arrived' | 'delivered' | null;
   assigned_driver_id: string | null;
   created_at: string;
   customer_id: string; 
@@ -39,11 +39,10 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // THE FIX: One single, guaranteed initialization flow
+  // Guaranteed initialization flow
   useEffect(() => {
     let isMounted = true;
 
-    // Failsafe: Turn off loader after 3 seconds no matter what
     const failsafe = setTimeout(() => {
       if (isMounted) setLoading(false);
     }, 3000);
@@ -71,12 +70,12 @@ export default function DriverApp() {
           if (profile?.phone) setUserPhone(profile.phone);
         }
 
-        // Fetch deliveries immediately using the resolved workspace ID
+        // 🚀 THE FIX 1: Fetch strictly 'in_transit' orders to match the CRM column
         const { data: ordersData, error: ordersError } = await supabase
           .from('orders')
           .select('*, customers(name)')
           .eq('user_id', activeWorkspaceId)
-          .neq('status', 'fulfilled') // 🚀 Show ALL active orders (pending, in_transit, etc.)
+          .eq('status', 'in_transit') 
           .order('created_at', { ascending: true });
 
         if (!ordersError && ordersData && isMounted) {
@@ -104,7 +103,7 @@ export default function DriverApp() {
         .from('orders')
         .select('*, customers(name)')
         .eq('user_id', workspaceId)
-        .neq('status', 'fulfilled')
+        .eq('status', 'in_transit')
         .order('created_at', { ascending: true });
         
       if (data) setDeliveries(data as Order[]);
@@ -166,8 +165,7 @@ export default function DriverApp() {
 
     if (error) {
       alert("Failed to claim order. Check connection.");
-      // Soft refresh on failure
-      const { data } = await supabase.from('orders').select('*, customers(name)').eq('user_id', workspaceId!).neq('status', 'fulfilled').order('created_at', { ascending: true });
+      const { data } = await supabase.from('orders').select('*, customers(name)').eq('user_id', workspaceId!).eq('status', 'in_transit').order('created_at', { ascending: true });
       if (data) setDeliveries(data as Order[]);
     } else {
       sendOrderNotification(order, 'assigned'); 
@@ -227,8 +225,10 @@ export default function DriverApp() {
 
   if (!userId) return <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}></div>;
 
-  const poolOrders = deliveries.filter(o => o.delivery_state === 'unassigned');
+  // 🚀 THE FIX 2: Filter the pool by checking if the assigned driver is empty, completely ignoring 'delivery_state' text bugs
+  const poolOrders = deliveries.filter(o => !o.assigned_driver_id);
   const myRouteOrders = deliveries.filter(o => o.assigned_driver_id === userId);
+  
   const displayOrders = activeTab === 'pool' ? poolOrders : myRouteOrders;
 
   return (
@@ -274,7 +274,7 @@ export default function DriverApp() {
                   <p className={`text-lg font-black mt-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatCurrency(order.total_amount, 'USD')}</p>
                 </div>
                 <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${activeTab === 'pool' ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/20 text-blue-500'}`}>
-                  {activeTab === 'pool' ? 'Needs Driver' : order.delivery_state.replace('_', ' ')}
+                  {activeTab === 'pool' ? 'Needs Driver' : (order.delivery_state || 'assigned').replace('_', ' ')}
                 </div>
               </div>
               
@@ -296,7 +296,7 @@ export default function DriverApp() {
                   </div>
 
                   {/* DYNAMIC PROGRESS BUTTONS */}
-                  {order.delivery_state === 'assigned' && (
+                  {(order.delivery_state === 'assigned' || !order.delivery_state) && (
                     <button onClick={() => advanceProgress(order.id, 'picked_up')} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl flex justify-center items-center gap-2 active:scale-95 transition-transform border dark:border-slate-700">
                       <Package size={16} /> Mark as Picked Up
                     </button>
