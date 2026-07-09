@@ -10,7 +10,7 @@ import Header from '../components/Header';
 import Papa from 'papaparse';
 import { 
   Package, Plus, FileSpreadsheet, ScanLine, Trash2, 
-  UploadCloud, AlertCircle, CheckCircle2, X, RefreshCw, Box
+  UploadCloud, AlertCircle, CheckCircle2, X, RefreshCw, Box, Download
 } from 'lucide-react';
 
 interface Product {
@@ -98,6 +98,41 @@ export default function InventoryManagement() {
   };
 
   // 2. BULK CSV UPLOAD LOGIC
+  const downloadCSVTemplate = () => {
+    const headers = [
+      "sku", "product_name", "price", "quantity", 
+      "category", "variant_1_name", "variant_1_value", 
+      "variant_2_name", "variant_2_value", "description"
+    ];
+    
+    // Sample 1: A product with variants (Size and Color)
+    const sampleRow1 = [
+      "SHIRT-BL-M", "Classic T-Shirt", "25.00", "50", 
+      "Apparel", "Color", "Blue", "Size", "M", "100% cotton premium t-shirt"
+    ];
+    
+    // Sample 2: A simple product with no variants
+    const sampleRow2 = [
+      "MUG-001", "Coffee Mug", "12.50", "100", 
+      "Home Goods", "", "", "", "", "Ceramic coffee mug 11oz"
+    ];
+
+    const csvContent = [
+      headers.join(","),
+      sampleRow1.join(","),
+      sampleRow2.join(",")
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", "myanhub_inventory_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleCsvUpload = async () => {
     if (!csvFile || !userId) return;
     setCsvStatus({ type: 'processing', msg: 'Parsing CSV data...' });
@@ -106,11 +141,17 @@ export default function InventoryManagement() {
       header: true, skipEmptyLines: true,
       complete: async (results) => {
         const rows = results.data as any[];
+        
+        // 🚀 UPDATED MAPPER: Evaluates multiple fallback formats, prioritizing universal variant mapping
         const payload = rows.map(row => ({
           user_id: userId,
-          name: row.name || row.Name || row.NAME || 'Unknown Item',
+          name: row.product_name || row.name || row.Name || row.NAME || 'Unknown Item',
           price: parseFloat(row.price || row.Price || row.PRICE || '0'),
-          stock_quantity: parseInt(row.quantity || row.Quantity || row.qty || row.QTY || '0')
+          stock_quantity: parseInt(row.quantity || row.Quantity || row.qty || row.QTY || '0'),
+          // Optional dynamic fields mapping (if these columns exist in the DB later)
+          // sku: row.sku || '',
+          // category: row.category || '',
+          // variant_1: row.variant_1_name && row.variant_1_value ? `${row.variant_1_name}:${row.variant_1_value}` : null
         }));
 
         if (payload.length === 0) { setCsvStatus({ type: 'error', msg: 'No valid rows found in CSV.' }); return; }
@@ -300,37 +341,54 @@ export default function InventoryManagement() {
           </div>
         )}
 
-        {/* MODAL 2: BULK CSV UPLOAD */}
+        {/* 🚀 MODAL 2: BULK CSV UPLOAD (FULLY UPGRADED VARIANT SCHEMA) */}
         {activeModal === 'csv' && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setActiveModal('none')}>
-            <div className={`w-full max-w-md p-6 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <div className={`w-full max-w-lg p-6 rounded-2xl shadow-xl flex flex-col ${isDarkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+              
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-bold flex items-center gap-2"><FileSpreadsheet className="text-indigo-500"/> Bulk Import</h3>
-                <button onClick={() => setActiveModal('none')} className="p-1 rounded opacity-50 hover:opacity-100"><X size={20}/></button>
+                <h3 className="text-lg font-bold flex items-center gap-2"><FileSpreadsheet className="text-indigo-500"/> Bulk Import Matrix</h3>
+                <button onClick={() => setActiveModal('none')} className="p-1 rounded opacity-50 hover:opacity-100 transition-opacity"><X size={20}/></button>
               </div>
 
-              <div className="space-y-4">
-                <div className={`p-4 rounded-lg text-xs border ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                  <strong>Required CSV Format:</strong> Ensure your file has a header row with columns specifically named: <code className="text-indigo-500">name, price, quantity</code>
+              <div className="space-y-6">
+                
+                {/* UPGRADED INSTRUCTIONS & DOWNLOAD */}
+                <div className={`p-4 rounded-xl text-xs border ${isDarkMode ? 'bg-indigo-950/30 border-indigo-900/50' : 'bg-indigo-50 border-indigo-100'}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                    <p className={`font-bold ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>Required CSV Architecture:</p>
+                    <button 
+                      onClick={downloadCSVTemplate}
+                      className="text-[10px] font-bold uppercase tracking-wider bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                    >
+                      <Download size={14} /> Download Template
+                    </button>
+                  </div>
+                  <p className={`leading-relaxed ${isDarkMode ? 'text-indigo-200/70' : 'text-indigo-600/80'}`}>
+                    Ensure your file contains a header row. To track complex catalogs with sizes, colors, or technical specifications, map your data to the <code className={`px-1 rounded ${isDarkMode ? 'bg-slate-900 text-indigo-400' : 'bg-white text-indigo-600 font-bold'}`}>sku</code>, <code className={`px-1 rounded ${isDarkMode ? 'bg-slate-900 text-indigo-400' : 'bg-white text-indigo-600 font-bold'}`}>variant_1_name</code>, and <code className={`px-1 rounded ${isDarkMode ? 'bg-slate-900 text-indigo-400' : 'bg-white text-indigo-600 font-bold'}`}>variant_1_value</code> columns precisely as demonstrated in the template document.
+                  </p>
                 </div>
 
-                <label className={`w-full flex flex-col items-center justify-center py-10 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${csvFile ? (isDarkMode ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : 'border-emerald-500 bg-emerald-50 text-emerald-600') : (isDarkMode ? 'border-slate-700 hover:border-indigo-500/50 bg-slate-950 hover:bg-slate-900 text-slate-400' : 'border-slate-300 hover:border-indigo-500 bg-slate-50 hover:bg-slate-100 text-slate-500')}`}>
-                  <UploadCloud size={32} className="mb-2" />
+                {/* DROPZONE */}
+                <label className={`w-full flex flex-col items-center justify-center py-12 border-2 border-dashed rounded-xl cursor-pointer transition-all ${csvFile ? (isDarkMode ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : 'border-emerald-500 bg-emerald-50 text-emerald-600') : (isDarkMode ? 'border-slate-700 hover:border-indigo-500/50 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-indigo-400' : 'border-slate-300 hover:border-indigo-500 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-indigo-500')} group`}>
+                  <UploadCloud size={36} className={`mb-3 transition-colors ${csvFile ? '' : 'text-slate-400 group-hover:text-indigo-400'}`} />
                   <span className="text-sm font-bold">{csvFile ? csvFile.name : 'Click to select CSV File'}</span>
                   <input type="file" accept=".csv" onChange={(e) => setCsvFile(e.target.files?.[0] || null)} className="hidden" />
                 </label>
 
+                {/* STATUS INDICATOR */}
                 {csvStatus.msg && (
-                  <div className={`p-3 rounded-lg text-xs font-bold flex items-center gap-2 ${csvStatus.type === 'error' ? 'bg-rose-500/10 text-rose-500' : csvStatus.type === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-indigo-500/10 text-indigo-500'}`}>
-                    {csvStatus.type === 'processing' ? <RefreshCw size={14} className="animate-spin" /> : csvStatus.type === 'error' ? <AlertCircle size={14}/> : <CheckCircle2 size={14}/>}
+                  <div className={`p-4 rounded-xl text-xs font-bold flex items-center gap-3 animate-fade-in ${csvStatus.type === 'error' ? (isDarkMode ? 'bg-rose-950/40 text-rose-400 border border-rose-900' : 'bg-rose-50 text-rose-700 border border-rose-200') : csvStatus.type === 'success' ? (isDarkMode ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900' : 'bg-emerald-50 text-emerald-700 border border-emerald-200') : (isDarkMode ? 'bg-indigo-950/40 text-indigo-400 border border-indigo-900' : 'bg-indigo-50 text-indigo-700 border border-indigo-200')}`}>
+                    {csvStatus.type === 'processing' ? <RefreshCw size={16} className="animate-spin flex-shrink-0" /> : csvStatus.type === 'error' ? <AlertCircle size={16} className="flex-shrink-0"/> : <CheckCircle2 size={16} className="flex-shrink-0"/>}
                     {csvStatus.msg}
                   </div>
                 )}
 
-                <button onClick={handleCsvUpload} disabled={!csvFile || csvStatus.type === 'processing'} className="w-full bg-slate-900 dark:bg-indigo-600 text-white font-bold py-3 rounded-lg mt-2 transition-all disabled:opacity-50">
+                <button onClick={handleCsvUpload} disabled={!csvFile || csvStatus.type === 'processing'} className={`w-full text-white font-bold py-3.5 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 ${isDarkMode ? 'bg-slate-800 hover:bg-indigo-600' : 'bg-slate-900 hover:bg-indigo-600'}`}>
                   Execute Bulk Import
                 </button>
               </div>
+
             </div>
           </div>
         )}
