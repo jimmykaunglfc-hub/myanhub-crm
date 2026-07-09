@@ -27,7 +27,7 @@ export default function DriverApp() {
   const router = useRouter();
   
   const [userId, setUserId] = useState<string | null>(null);
-  const [userPhone, setUserPhone] = useState<string>('N/A'); // Driver's phone
+  const [userPhone, setUserPhone] = useState<string>('N/A');
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,59 +39,83 @@ export default function DriverApp() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 🚀 THE FIX: Single, guaranteed initialization flow
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error || !session) {
-        router.replace('/login');
-        return;
-      }
-      setUserId(session.user.id);
-      
-      // Fetch profile data including the phone number
-      const { data: profile } = await supabase.from('profiles').select('workspace_id, phone').eq('id', session.user.id).single();
-      if (profile) {
-        setWorkspaceId(profile.workspace_id);
-        if (profile.phone) setUserPhone(profile.phone);
+    const initializeApp = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session) {
+          router.replace('/login');
+          return;
+        }
+        
+        setUserId(session.user.id);
+        
+        // Fetch profile data
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('workspace_id, phone')
+          .eq('id', session.user.id)
+          .single();
+        
+        // If the user has a workspace_id (Driver), use it. 
+        // If they don't (CRM Owner), fallback to their own session ID.
+        const activeWorkspaceId = profile?.workspace_id || session.user.id;
+        
+        setWorkspaceId(activeWorkspaceId);
+        if (profile?.phone) setUserPhone(profile.phone);
+
+        // Fetch deliveries instantly using the activeWorkspaceId
+        const { data: ordersData, error: ordersError } = await supabase
+          .from('orders')
+          .select('*, customers(name)')
+          .eq('user_id', activeWorkspaceId)
+          .eq('status', 'in_transit') // Restored exactly to your original logic
+          .order('created_at', { ascending: true });
+
+        if (!ordersError && ordersData) {
+          setDeliveries(ordersData as Order[]);
+        }
+      } catch (err) {
+        console.error("Initialization error:", err);
+      } finally {
+        // Guaranteed to turn off the infinite spinner
+        setLoading(false);
       }
     };
-    checkSession();
+
+    initializeApp();
   }, [router]);
 
-  const fetchDeliveries = async () => {
-    if (!workspaceId) return;
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*, customers(name)')
-      .eq('user_id', workspaceId)
-      .eq('status', 'in_transit') // Restored exactly to original
-      .order('created_at', { ascending: true });
-
-    if (!error && data) setDeliveries(data as Order[]);
-    setLoading(false);
-  };
-
-  useEffect(() => { if (workspaceId) fetchDeliveries(); }, [workspaceId]);
-
+  // Real-time subscription
   useEffect(() => {
     if (!workspaceId) return;
+    
+    const refreshDeliveries = async () => {
+      const { data } = await supabase
+        .from('orders')
+        .select('*, customers(name)')
+        .eq('user_id', workspaceId)
+        .eq('status', 'in_transit')
+        .order('created_at', { ascending: true });
+      if (data) setDeliveries(data as Order[]);
+    };
+
     const channel = supabase.channel('live-driver-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchDeliveries(); 
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, refreshDeliveries)
       .subscribe();
+      
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId]);
 
   // -------------------------------------------------------------
-  // AUTOMATED TRACKING NOTIFICATION ENGINE (Driver Side)
+  // AUTOMATED TRACKING NOTIFICATION ENGINE
   // -------------------------------------------------------------
   const sendOrderNotification = async (order: Order, newStatus: string) => {
     if (!workspaceId) return; 
 
     let notificationText = '';
     
-    // Notification logic with Driver's Phone Number
     if (newStatus === 'assigned') {
       notificationText = `🚚 Great news! Your order ${order.order_id_string} has been picked up by our driver. You can contact them at: ${userPhone}`;
     } else if (newStatus === 'picked_up') {
@@ -123,11 +147,9 @@ export default function DriverApp() {
   const claimOrder = async (orderId: string) => {
     if (!userId) return;
     
-    // 1. Optimistic UI: Update screen instantly
     setDeliveries(prev => prev.map(o => o.id === orderId ? { ...o, assigned_driver_id: userId, delivery_state: 'assigned' } : o));
     setActiveTab('my_route');
 
-    // 2. Background Sync
     const { error } = await supabase.from('orders').update({ 
       assigned_driver_id: userId, 
       delivery_state: 'assigned' 
@@ -135,9 +157,10 @@ export default function DriverApp() {
 
     if (error) {
       alert("Failed to claim order. Check connection.");
-      fetchDeliveries(); // Revert screen if failed
+      // Soft refresh on failure
+      const { data } = await supabase.from('orders').select('*, customers(name)').eq('user_id', workspaceId!).eq('status', 'in_transit').order('created_at', { ascending: true });
+      if (data) setDeliveries(data as Order[]);
     } else {
-      // 3. Trigger notification for assigning driver
       const targetOrder = deliveries.find(o => o.id === orderId);
       if (targetOrder) sendOrderNotification(targetOrder, 'assigned');
     }
@@ -151,7 +174,6 @@ export default function DriverApp() {
     
     if (error) {
       alert("Failed to update progress.");
-      fetchDeliveries(); 
     } else {
       const targetOrder = deliveries.find(o => o.id === orderId);
       if (targetOrder) sendOrderNotification(targetOrder, newState);
@@ -190,7 +212,6 @@ export default function DriverApp() {
       setEvidenceFile(null);
     } catch (error: any) {
       alert(`Delivery failed: ${error.message}`);
-      fetchDeliveries(); 
     } finally {
       setIsSubmitting(false);
     }
